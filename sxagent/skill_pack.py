@@ -20,62 +20,32 @@
 ## 设计原则（不变量）
 
 1. **技能包里的文件不进 `Skill` 对象** —— 它本来就在磁盘上读得到，装进对象里是
-   **多余的一份**。`PACK_DIRS` 只记**位置**（不是内容），`Skill` 仍然只有
-   `name` ＋ `description` ＋ `instructions`。〔沿革 1〕
+   **多余的一份**。`PACK_DIRS` 只记**位置**（不是内容）。
 2. **读不读、什么时候读、读哪一份，是 LLM 自己的决策** —— 这里只提供两件事：
    `list_skill_files()`（有哪些）和 `read_skill_file()`（读一份）。两者**都现场扫盘**，
    内存里不留副本。
 3. **只认 `SKILL.md`** —— 入口文件名**只有一种**。不做"跟目录同名"的兼容：
    两种写法并存会让"这个目录到底是不是一个技能包"变得要靠猜。
 4. **不限定子目录名** —— 作者的资料放 `references/` 还是 `assets/` 还是别的，
-   **是作者的事**；规定"参考资料必须叫 references"就是用目录名约束作者。〔沿革 2〕
+   **是作者的事**；规定"参考资料必须叫 references"就是用目录名约束作者。
 5. **收与不收**：**收**扩展名在白名单里的文本文件（`TEXT_EXTS`），含子目录（名字带相对路径）；
    **不收**二进制、超大文件、隐藏目录 —— **在"列"这一步就过滤掉**，所以 LLM 的清单里
    根本不会出现读不了的东西。
 6. 🔑 **`read_skill_file` 只认 `list_skill_files` 给得出来的东西** —— 路径穿越（`../`）、
    二进制、超大文件全被这一条挡住，**不需要再写一套路径检查**。
 7. **清单必须带 `skill_name`** —— `read_skill_file(skill_name, path)` 的**第一个参数是技能名**，
-   不写，执行器就只能**猜**。〔沿革 5〕
+   不写，执行器就只能**猜**。
 8. **提示块只有一份**（`skill_file_prompt`）—— `read_skill` 的工具返回与
-   `executor.run_task` 的任务书都调它；两处各拼一遍就是两副面孔。〔沿革 7〕
+   `executor.run_task` 的任务书都调它；两处各拼一遍就是两副面孔。
 9. **两个 LLM 读工具住这里**（`read_skill` / `read_skill_file`）：它们同时要"领域对象"
-   （`registry`）和"磁盘 I/O"（本模块），住 `skills.py` 就得函数内 lazy import 本模块。〔沿革 7〕
-10. **工具返回的头不用 `【…】`** —— 那是**段名的专用符号**，独占行首就等于声明"这是个段名"
-    （记录层靠这两条做确定性切分）；它只是**工具返回的头**。
+   （`registry`）和"磁盘 I/O"（本模块），住 `skills.py` 就得函数内 lazy import 本模块。
+10. **工具返回的头不用 `【…】`** —— 那是**段名的专用符号**（记录层靠它做确定性切分）；
+    它只是**工具返回的头**。
 
 ## 关键取舍
 
 **只存"位置"，不存"内容"**：`PACK_DIRS` 记包目录，清单与正文**每次现场扫盘** ——
 代价是多一次遍历，换来内存里没有第二份副本（也就没有"副本过期"那一族状态）。
-
-## 沿革（改过什么、为什么改）
-
-1. **本模块从 `skills.py` 分出来**（2026-10-30）：技能包 I/O ≠ 技能领域 —— 参考文件
-   **不进 `Skill` 字段**（用户定的，也是 §0.6 C2「平台尽量少约束 skill 作者」与
-   评审 D1「不引入任何新字段」的延续）。
-2. **扫描范围从 `references/` 扩到整个包**（2026-10-30 用户定：整个包都能读）：规定
-   "参考资料必须叫 references"就是用目录名约束作者（跟 C2 相冲）；实测
-   `pbl-teaching-designer` 就把阶段模板放在 `assets/`。
-3. **清单里的路径改成"相对包根"**（2026-10-30 撞上）：原来给的是"相对 `references/`"，
-   而作者在 `SKILL.md` 里写的是 `references/xxx.md` —— 模型照抄去读**一律读不到**。
-4. **`split_frontmatter` 按行找分隔符**（2026-10-30 拿真实技能包一试就撞上）：真实技能的
-   frontmatter 里有 `artifact_start: "---教案开始---"`，**值里就带 `---`** ——
-   naive 的 `text.split("---")` 会在引号中间断开、YAML 直接解析失败。
-5. **清单必须写 `skill_name`**（2026-11-02 实测踩到）：清单里只有路径，而
-   `read_skill_file` 的第一个参数是技能名 —— 不写，执行器就只能**猜**：实测它试了
-   「课堂活动配置生成」「classroom-activity-config」「activity-config」「config」四个变体，
-   全返回"没有自带文件"，卡了 121 秒后放弃，反过来问用户"这个技能的确切名称是什么"。
-   ⚠️ 这个坑只在"**技能包有 references 且活是委派出去的**"时才出现 —— 走委派的现有技能
-   都没有 references，有 references 的真技能又被主 agent 自己干了，所以一直没暴露；
-   `EXEC_PATH=delegate` 一开，第一次跑就撞上。
-6. **`read_skill` 里那条反向依赖没了**（2026-11-03）：它原来是
-   `from sxagent.agent import SKILLS`（领域层反向依赖编排层，就为了读到"评测替换过的那份表"）
-   —— 技能表收进 `sxagent/registry.py` 之后，那个环和这条 lazy import 一起消失。
-7. **两个读工具搬进本模块**（2026-11-05，外审 F2/F3）：它们住在 `skills.py` 就得
-   **函数内 lazy import** 本模块（一提就成环 —— 实测：把那一行提到顶层**当场 ImportError**）。
-   同一次把【技能自带文件】提示块抽成
-   `skill_file_prompt`：它原来在 `read_skill` 的工具返回与 `executor.run_task` 的任务书里
-   **逐字重复**（实测 diff 只差变量名）。
 """
 
 from __future__ import annotations
@@ -113,7 +83,7 @@ def split_frontmatter(text: str) -> tuple[dict, str]:
 
     🔴 **结束标记必须是"独占一行"的 `---`** —— 不能简单 `text.split("---")`：
     **值里可以带 `---`**（真实技能就有），naive split 会在引号中间断开、
-    YAML 直接解析失败。**按行找分隔符**才稳。〔沿革 4〕
+    YAML 直接解析失败。**按行找分隔符**才稳。
     """
     s = text.lstrip("﻿").lstrip()  # BOM 也算 —— 有的编辑器会写进去
     lines = s.splitlines()
@@ -136,9 +106,8 @@ def split_frontmatter(text: str) -> tuple[dict, str]:
 def list_skill_files(skill_name: str) -> list[tuple[str, int]]:
     """技能包里的文本文件 → `[(相对包根的路径, 字数), ...]`。**现场扫盘，不缓存。**
 
-    🔴 **不限定子目录名**（模块头原则 4）：作者爱放 `references/` 还是 `assets/`
-    还是别的，是**作者的事** —— 平台去规定"参考资料必须叫 references"，
-    等于用目录名约束作者。〔沿革 2〕
+    🔴 **不限定子目录名**（模块头原则 4）：作者爱放 `references/` 还是 `assets/`，
+    是**作者的事**。
 
     **排除**：入口 `SKILL.md` 自己（它的正文已经是 `instructions` 了）、
     隐藏目录（`.git` 之类）、非文本扩展名、超大文件。
@@ -158,8 +127,7 @@ def list_skill_files(skill_name: str) -> list[tuple[str, int]]:
         if p.suffix.lower() not in TEXT_EXTS or p.stat().st_size > MAX_REF_BYTES:
             continue
         # 🔴 名字用**相对技能包根**的路径（`references/stage-1-topic.md`），
-        # **和 SKILL.md 里写的一模一样** —— 作者本来就是那么引用的
-        # （`[名](references/xxx.md)`、`见 references/xxx.md`）。〔沿革 3〕
+        # **和 SKILL.md 里写的一模一样** —— 作者本来就是那么引用的。
         out.append((rel.as_posix(), len(p.read_text(encoding="utf-8", errors="replace"))))
     return out
 
@@ -174,9 +142,9 @@ def skill_file_prompt(skill_name: str) -> str:
 
     🔴 **为什么抽成函数**（模块头原则 8）：这段提示原来在**两处各拼一遍、逐字重复**
     （`read_skill` 的工具返回 / `executor.run_task` 的任务书）—— 改一处忘另一处，
-    同一个东西就是两副面孔（"一套，别分叉"）。〔沿革 7〕
+    同一个东西就是两副面孔。
 
-    🔴 **必须把 `skill_name` 写进清单**（模块头原则 7）—— 不写，执行器就只能**猜**。〔沿革 5〕
+    🔴 **必须把 `skill_name` 写进清单**（模块头原则 7）—— 不写，执行器就只能**猜**。
 
     ⚠️ **不用 `【…】`**（段名专用符号，见模块头原则 10）—— 它是【技能指令】**里面**的一段，
     不是和它平级的段。
@@ -211,10 +179,9 @@ async def read_skill(skill_name: str) -> str:
     **交付什么、按什么标准交付**，用它读原文核对 —— **不要凭描述猜**。
     """
     # 🔴 **住在这里**（模块头原则 9）：它同时要用"领域对象"（`registry`）和"磁盘 I/O"
-    #    （本模块的文件清单）—— 住 `skills.py` 就得函数内 lazy import 本模块
-    #    （一提就成环，探针实测）。〔沿革 7〕
-    # 🔴 原来这里是 `from sxagent.agent import SKILLS`（领域层反向依赖编排层）——
-    #    技能表收进 `sxagent/registry.py` 后那条 import 没了。〔沿革 6〕
+    #    （本模块的文件清单）—— 住 `skills.py` 就得函数内 lazy import 本模块（一提就成环）。
+    #    ⚠️ 这里原来还有一条反向 import（`from sxagent.agent import SKILLS`）——
+    #    技能表收进 `sxagent/registry.py` 后那条没了。
     skill = registry.get(skill_name)
     if skill is None:
         return f"没有技能「{skill_name}」。可用：{'、'.join(registry.names())}"

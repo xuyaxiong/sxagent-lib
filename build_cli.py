@@ -5,38 +5,39 @@
 ## 为什么是 onedir 不是 onefile
 
 onefile 每次启动都要把上百 MB 解压到临时目录，**启动慢好几秒**；
-而我们本来就要给用户一个目录（`.env` / `skills/` / `runs/` 都在 exe 旁边）。
+而我们本来就要给用户一个目录（`.env` / `skills/` / `runs/` 都在程序旁边）。
 代价是目录里多一个 `_internal/`（依赖文件，用户不用碰）——
-所以**要提醒用户整个文件夹拷走，别只拷 exe**。
+所以**要提醒用户整个文件夹拷走，别只拷可执行文件**。
 
 ## 🔴 打出来必须真跑一遍
 
 PyInstaller **漏收依赖（under-collection）是常态**，langchain / langgraph 这种
 动态导入重灾区尤其是。下面那串 `--collect-*` 就是为它加的，但**不能假定够了**：
-必须在一台**没装 Python** 的机器上跑通一次完整对话才算数（技能列出来 → 派任务 → 出产物 → `runs/` 有记录）。
+必须在一台**没装 Python** 的机器上跑通一次完整对话才算数
+（技能列出来 → 派任务 → 出产物 → `runs/` 有记录）。
 
 ## 🔴 重建**不许**把用户数据删掉
 
 `--noconfirm` 会把目标目录**整个删掉**再重建 —— 而那个目录里除了构建产物，还住着
 **用户的数据**：填好的 `.env`（真 key）、自己加的 `skills/`、每次对话的 `runs/`。
-（2026-11-02 实测踩到：打完 `.env` 没了，只能手动救回来。）
+（实测踩到：打完 `.env` 没了，只能手动救回来。）
 
 所以打包前先把 `KEEP` 里那几样挪到 `<dist>/_keep-<时间>`，打完**原样放回**；
 打失败也放（`finally`，含"挪到一半就炸"）—— 一次打包失败不该让用户的 key 留在暂存目录里。
 **挪用的是同卷改名（`os.rename`），不是 `shutil.move`** —— 后者改名失败会回退成
 "先复制、再删源"，删到一半炸掉就在暂存里留下一份孤儿副本，下一次打包还会被套进
-`runs/runs/`（2026-11-02 实测踩到）。
+`runs/runs/`（实测踩到）。
 
-⚠️ **打包时那个 exe 不能开着**：它占着 `runs/<tag>/_console.log`，Windows 不许改名/删除
+⚠️ **打包时那个程序不能开着**：它占着 `runs/<tag>/_console.log`，Windows 不许改名/删除
 （`WinError 32`）。真遇到了会**当场停下并说清怎么办**，不会硬删；已经在跑的包要打新包，
 就用 `--out` 换个落点（见下）。
 
 ## 用户拿到手长这样
 
     sxagent/
-    ├─ sxagent.exe
+    ├─ 可执行文件（Windows 上是 sxagent.exe）
     ├─ .env              ← **你填好再发**（key / model / base_url）；随包只放 .env.example
-    ├─ skills/           ← 首次运行自动建，并放 3 个示例技能；用户往里丢 .md 就加技能
+    ├─ skills/           ← 首次运行自动建，并放示例技能；用户往里丢技能包就加技能
     └─ runs/             ← 首次运行自动建；每次对话一份记录，让他们整包发回来
 """
 
@@ -81,7 +82,7 @@ EXCLUDE: list[str] = [
 ]
 
 #: 🔴 **重建时必须保住的东西** —— PyInstaller 的 `--noconfirm` 会把目标目录**整个删掉**再重建，
-#: 而这几样是**用户的数据**，不是构建产物（2026-11-02 实测踩到：打完 `.env` 没了，里面是真 key）。
+#: 而这几样是**用户的数据**，不是构建产物（实测踩到：打完 `.env` 没了，里面是真 key）。
 #: 打包前挪到 `<dist>/_keep-<时间>`，打完（**哪怕打失败了**）原样放回。
 #: ⚠️ `logs/` 不在列 —— 那是原始 trace，`runs/<tag>/` 里的 `_run.md` 已经附了一份。
 KEEP: list[str] = [
@@ -105,11 +106,11 @@ def _stash_user_data(built: Path, stash: Path, moved: list[str]) -> None:
         try:
             # ⚠️ 用 `os.rename`（同卷改名，原子）**不用 `shutil.move`** —— `move` 在改名失败时
             # 会回退成"先复制、再删源"：删源删到一半炸掉，暂存里就留下**一份孤儿副本**，
-            # 下一次打包撞上它，还会被套进 `runs/runs/`（2026-11-02 实测踩到）。
+            # 下一次打包撞上它，还会被套进 `runs/runs/`（实测踩到）。
             # 两边都在 `dist/` 下，同卷改名根本用不上那条回退。
             os.rename(src, stash / name)
         except OSError as e:
-            # 🔴 实测踩到（2026-11-02）：**打好的 exe 还开着**，它占着 `runs/` 里的 `_console.log`，
+            # 🔴 实测踩到：**打好的程序还开着**，它占着 `runs/` 里的 `_console.log`，
             # Windows 不许改名 → `PermissionError: [WinError 32]`。
             # **这里不硬来**：说清怎么办，已经挪走的交给 `finally` 放回去。
             raise RuntimeError(
@@ -124,7 +125,7 @@ def _restore_user_data(built: Path, stash: Path, moved: list[str]) -> None:
     """原样放回去。
 
     ⚠️ 落点上已经有同名东西时**合并不覆盖** —— 只有"打包中途失败"才会遇到，
-    而那时落点上的东西（正在跑的 exe 刚写下的记录）**同样是用户的数据**，
+    而那时落点上的东西（正在跑的程序刚写下的记录）**同样是用户的数据**，
     不能拿暂存里那份旧的盖掉。
     """
     for name in moved:
@@ -145,7 +146,7 @@ def build(out_dir: Path | None = None) -> None:
     """`out_dir` 不传就打进 `dist/`。
 
     ⚠️ **上一个包还在跑的时候必须传它**（`--out dist/_new`）：PyInstaller 要**删掉**目标目录
-    再重建，而正在运行的 exe 占着那个目录 → `PermissionError: [WinError 5] 拒绝访问`。
+    再重建，而正在运行的程序占着那个目录 → `PermissionError: [WinError 5] 拒绝访问`。
     """
     dist = out_dir or (ROOT / "dist")
     # ⚠️ 落点用 `dist / NAME`（实际产物），**不是**模块级的 `DIST` ——

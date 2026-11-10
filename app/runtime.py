@@ -7,35 +7,15 @@
 （产物流水、执行器流水、token 计数）。
 
 **录什么**：`snapshot()` 抓一轮的全量快照；`dump_artifacts()` / `dump_run_record()`
-把它落成人能读的文件（逐轮全记录 + 软判断留档 + 原始 trace 附录）。
+把它落成人能读的文件（逐轮全记录 + 原始 trace 附录）。
 
 🔴 **为什么两个入口必须共用这一层**：它们要产**同一种记录格式**。
 交互式入口就是"把脚本预置的 turns 换成真人当场打的字"—— 格式不一致的话，
-收回来的一堆 run 没法比，而"比"正是现在要做的事（见 `app/chat.py` 的 docstring）。
+收回来的一堆 run 没法比，而"比"正是现在要做的事。
 
-## 沿革（改过什么、为什么改）
-
-> 编号是**引用锚**（正文里写 `〔沿革 N〕`）—— **只追加、不改号**，新条目加在**末尾**。
-
-1. **从 `_child.py` 拆出来**（2026-10-30）。原来 803 行里只有 68 行（`run_case` + `main`）
-   是跑批独有的，其余全是共用的 —— 但文件名和 docstring 只描述了那 68 行，于是
-   `chat.py` 的 `from evals._child import ...` 看着像"产品依赖测试代码"。
-   **共享是故意的，错的是名字** —— 当时改名成 `harness`。
-2. **搬出 `evals/`：`harness.py` → `app/runtime.py`**（2026-11-09）。沿革 1 只修了
-   **名字**，**位置**没动 —— 而 `harness` 本身就是个**测试词**，于是"产品代码住在
-   测试目录里"这件事原样留着（第四轮外审 P0-1 报的就是它）。
-   ⇒ 新建 `app/`：**`sxagent/` 是库、`app/` 是宿主、`evals/` 只放测试**。
-   ⚠️ **故障注入搬去了 `evals/stubs.py`**（`_FlakyStructured` ＋ 那两段）——
-   它是**纯测试旋钮**（`app/chat.py` 根本没有 `--fault` 这个开关），
-   住在本模块就是"测试关切混进产品装配"。`install()` 返回的 `fault` / `stream_fault`
-   **形状不变**（空 dict），由 `stubs.inject_faults(case, inst)` 往里写 ——
-   因为运行记录里带着它，产品那条路也要写出这个键。
-   ⚠️ `_append_trace` 也从 `evals/run.py` 收进来了（渲染运行记录的活儿，
-   产品入口也要用 —— 见〔沿革 3〕）。
-3. **`_append_trace` 从 `evals/run.py` 收编**（2026-11-09）。它把原始 trace 并进
-   `_run.md`，**渲染运行记录** —— 和 `dump_run_record` 是一件事。原来住在跑批模块里，
-   于是 `app/chat.py` 得 `from evals.run import _append_trace`（**产品 import 测试包**，
-   沿革 2 要修的就是它）。⇒ 挪到这儿，跟 `dump_run_record` 做邻居。
+⚠️ **故障注入不在这儿**：它是**纯测试旋钮**（交互式入口根本没有那个开关），
+住在本模块就是"测试关切混进产品装配"。`install()` 返回的 `fault` / `stream_fault`
+**形状不变**（空 dict），由测试侧往里写 —— 运行记录里带着它们，产品那条路也要写出这个键。
 """
 
 from __future__ import annotations
@@ -94,23 +74,20 @@ class UsageCounter(BaseCallbackHandler):
 
 #: PyInstaller 打的包里 `sys.frozen` 为真 —— 目录约定据此分叉。
 FROZEN = bool(getattr(sys, "frozen", False))
-#: 应用根：冻结后 = exe 所在目录，开发时 = `langgraph-lab/`（见 `sxagent.config.app_root`）。
+#: 应用根：冻结后 = 程序所在目录，开发时 = 仓库根（见 `sxagent.config.app_root`）。
 ROOT = app_root()
 #: 只读资源（随包带）：冻结后是 `sys._MEIPASS`，开发时同 ROOT。
 RESOURCE_ROOT = sxagent_config.RESOURCE_ROOT
 
-#: **技能目录的默认值** —— exe 旁边的 `skills/`（用户往里丢技能包就加技能）。
-#: 🔴 **冻结 / 开发是同一个表达式**（2026-11-09）：`skills/` 从 `evals/` 搬到**仓库顶层**之后，
-#: 两边指的本来就是同一个地方 —— 原来那条 `if FROZEN` 分叉**没有理由**，删了。
+#: **技能目录的默认值** —— 程序旁边的 `skills/`（用户往里丢技能包就加技能）。
+#: 🔴 **冻结 / 开发是同一个表达式**：`skills/` 在仓库顶层，两边指的本来就是同一个地方 ——
+#: 原来那条 `if FROZEN` 分叉**没有理由**，删了。
 DEFAULT_SKILLS_DIR = ROOT / "skills"
 
-#: **运行记录落哪** —— 应用根下的 `runs/`：exe 旁边（便携、用户找得到、方便整包发回来），
+#: **运行记录落哪** —— 应用根下的 `runs/`：程序旁边（便携、用户找得到、方便整包发回来），
 #: 开发时就是仓库顶层的 `runs/`。
-#: 🔴 **冻结 / 开发是同一个表达式**（2026-11-09）：原来开发那条走 `evals/runs/` ——
-#: 那是"跑批的输出住在测试目录里"，**没有理由**（同 `DEFAULT_SKILLS_DIR` 那条）。
-#: 连带 `evals/` 从此**只有测试代码**。
-#: ⚠️ 历史数据也一起搬过来了（`evals/runs/*` → `runs/*`，1227 个文件），
-#: 所以 `report.py <老 tag>` 照旧读得到。
+#: 🔴 **冻结 / 开发是同一个表达式**：原来开发那条走测试目录 —— 那是"跑批的输出住在测试
+#: 目录里"，**没有理由**（同 `DEFAULT_SKILLS_DIR` 那条）。
 RUNS_DIR = ROOT / "runs"
 
 #: 首次运行时铺进用户技能目录的**示例技能**（让他们知道技能包该长什么样）。
@@ -152,11 +129,10 @@ def _load_skills_dir(path_str: str) -> dict:
     """从目录装技能包（相对路径按**仓库根**解析，子进程 cwd 变了也不受影响）。
 
     🔴 **格式解析不在这里** —— "技能包长什么样、怎么读"是**领域知识**，
-    在 `sxagent.skill_pack`（`Skill` / `Reference` 两个领域对象在 `sxagent.skills`）。
-    这里只做一件事：**把相对路径定到仓库根，然后交给它**。
+    在 `sxagent.skill_pack`。这里只做一件事：**把相对路径定到仓库根，然后交给它**。
     """
     # ⚠️ **局部导入是有意的**：`sxagent.trace` 一被导入就开日志文件（模块级的 `_fh`），
-    # 而 `harness` 也被 `report.py` 这类**不该产生日志**的地方导入。**别提到模块级去。**
+    # 而本模块也被**不该产生日志**的地方导入。**别提到模块级去。**
     from sxagent import trace
     from sxagent.skill_pack import load_skills_dir
 
@@ -175,16 +151,15 @@ def _load_skills_dir(path_str: str) -> dict:
 def _install_skills(case: dict) -> None:
     """**技能集** —— `case.skills_dir` 读目录 / `case.skills` 内联，换进注册表。
 
-    🔴 **先 reset 再叠加**（R1）。三件事，每件都曾是"靠纪律"：
-      1. 原来这里手拼 `{**sxagent.skills.SKILLS, **extra}`，底取自"上一个 case 改过的表"
+    🔴 **先 reset 再叠加**。三件事，每件都曾是"靠纪律"：
+      1. 原来这里手拼 `{**内置表, **extra}`，底取自"上一个 case 改过的表"
          —— 上一个是 `replace` 模式时，它的技能就漏进这个 case（跨 case 串味）。
-         ⚠️ **今天走不到**（跑批是**一 case 一子进程**，`run.py:60` 起进程；
-         `install()` 全仓只有 `app/chat.py` / `evals/_child.py` 两个调用点，各自进程只调一次）。
+         ⚠️ **今天走不到**（跑批是**一 case 一子进程**，进程内只 `install()` 一次）。
          留着是因为它**本来就该对**：`reset()` 回到独立的**内置表**，一旦哪天做
-         "同进程多 case"（跑批提速 / 批量重放）就立刻用得上 —— 别等踩了再补。
-      2. 原来要 `sxagent.agent.SKILLS = merged` **和** `sxagent.skills.SKILLS = merged`
-         赋两次值 —— 漏一句就是"用户答了，执行器却像换了个人"（**这条实测踩过**：
-         `skills_mode: replace` + 多轮 + 有等待任务的 case）。现在只有一个入口。
+         "同进程多 case"（跑批提速 / 批量重放）就立刻用得上。
+      2. 原来要往两个模块各赋一次值 —— 漏一句就是"用户答了，执行器却像换了个人"
+         （**这条实测踩过**：`skills_mode: replace` + 多轮 + 有等待任务的 case）。
+         现在只有一个入口（`registry.testing`）。
       3. `extra` 为空时**也要 reset**：同 1，为"同进程多 case"留的。
     """
     import sxagent.skills
@@ -229,7 +204,6 @@ def _record_artifacts() -> list[dict]:
         return aid
 
     # `write_artifact` 的工具体在 `artifacts.py` 里按**模块全局**找 `store_artifact`，所以这里改得到
-    # （⚠️ 2026-11-04 修：这句原来写的是 `skills.py` —— 10-30 就搬去 `artifacts.py` 了）
     sxagent.artifacts.store_artifact = rec_store
     return writes
 
@@ -295,7 +269,7 @@ def _count_tokens() -> UsageCounter:
 def install(case: dict) -> dict:
     """装好全部观测与注入。**必须在 `build()` 之前调用**。
 
-    ⚠️ **它自己只做编排**（2026-11-09 拆）：清库 → 技能 → 三处打桩 → 开关。
+    ⚠️ **它自己只做编排**：清库 → 技能 → 三处打桩 → 开关。
     每一步各在一个私有件里（`_install_skills` / `_record_artifacts` /
     `_record_run_tasks` / `_count_tokens`）。原来是一个 64 行的函数。
     """
@@ -317,10 +291,9 @@ def install(case: dict) -> dict:
     # ④′ token / 调用计数
     counter = _count_tokens()
 
-    # ⑤ **故障注入不在这儿** —— 它是**测试旋钮**（产品入口根本没有那个开关），
-    #    住在产品装配里就是"测试关切混进产品模块"。见 `evals/stubs.py`：
-    #    `stubs.inject_faults(case, inst)` 在 `install()` **之后**调，往下面这两个
-    #    dict 里写（它们是**同一个对象**，所以运行记录照旧带着 `fault` / `stream_fault`）。〔沿革 2〕
+    # ⑤ **故障注入不在这儿** —— 它是**测试旋钮**（交互式入口根本没有那个开关），
+    #    住在产品装配里就是"测试关切混进产品模块"。测试侧在 `install()` **之后**
+    #    往下面这两个 dict 里写（它们是**同一个对象**，所以运行记录照旧带着它们）。
     return {
         "counter": counter,
         "writes": writes,
@@ -333,7 +306,7 @@ def install(case: dict) -> dict:
 # ──────────────────────────── 快照 ────────────────────────────
 
 
-#: 主 agent 上下文**告警线** —— **只告警，不判红**（2026-10-30 用户定：
+#: 主 agent 上下文**告警线** —— **只告警，不判红**（用户定：
 #: *"删掉这个测试，把这个信息记录到日志 warning 里面不就完了"*）。
 #:
 #: 为什么不做成断言：**读产物是主 agent 的合法能力**（它也要能干活、能按需读），
@@ -389,7 +362,7 @@ def _msg_record(m) -> dict:
     """**一条 LangChain 消息 → 记录里那份**（原文，不截断）。
 
     🔴 **交接对象读 `additional_kwargs`，不从 `content` 反推** —— 回执的结构化形态
-    搭同一趟车（实测**不会漏给模型**）。用户 2026-11-03：禁止反结构化任何 LLM 正文输出。
+    搭同一趟车（实测**不会漏给模型**）。**禁止反结构化任何 LLM 正文输出。**
     """
     kwargs = getattr(m, "additional_kwargs", None) or {}
     return {
@@ -426,8 +399,8 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
     return {
         "turn": idx,
         "user": user,
-        #: 这句话是谁给的 —— `scripted`（case YAML 预置）/ `human`（`app.chat` 当场打的）。
-        #: 日志必须如实标：读的人不能把"我编的答复"当成真实用户行为。
+        #: 这句话是谁给的 —— `scripted`（脚本预置）/ `human`（交互式入口当场打的）。
+        #: 日志必须如实标：读的人不能把"预置的答复"当成真实用户行为。
         "input_source": "scripted",
         "reply": _last_ai_text(state),
         "tasks": state.get("tasks") or [],
@@ -463,8 +436,6 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 
     🔴 这是**唯一可靠的"完整性"真值来源**：**只有把原文摊开给人看，"这份到底完不完整"
     才有答案** —— 中间隔着"谁转述 / 谁截断"的任何一层都不算。
-    （⚠️ 2026-11-05 判定退休：这条原来的论据是"判定被 800 字预算截断，既会误判完整产物、
-    又会漏掉落在中段的真占位符"—— 那次事故是事实，只是判定那层现在整个没有了。）
 
     落 `runs/<tag>/artifacts/<case>__r<rep>/`：每个产物一个文件 + 一份 `_index.md`。
     """
@@ -481,9 +452,9 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
         # 类型和文件名都取**记录里那份**（`store_artifact` 按声明的类型定好的）——
         # 这里另算一遍的话，会和它当场落盘时写的那份对不上。
         fn = a.get("file") or f"{aid}_{_slug(a['title'])}{a.get('ext', '.md')}"
-        # 🔴 **落盘 = 库里那份，一字不加**（用户 2026-11-06："正文就是正文 平台不必加料"）
-        #    —— 与 `store_artifact` 当场落盘**同一条规矩**（SX-13：来源头的 H1 曾冒充
-        #    文档标题、与技能模板的 H2 撞名）。守卫：`unit_artifact_race` ③。
+        # 🔴 **落盘 = 库里那份，一字不加**（"正文就是正文 平台不必加料"）
+        #    —— 与 `store_artifact` 当场落盘**同一条规矩**（来源头的 H1 曾冒充
+        #    文档标题、与技能模板的 H2 撞名）。
         (d / fn).write_text(a["content"], encoding="utf-8")
         rows.append(
             f"| `{aid}` | {a['title']} | {len(a['content'])} "
@@ -503,16 +474,15 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 #: 出口分类 → 给读日志的人看的记号。
 #:
 #: 🔴 **判据不在本文件里** —— 从 `sxagent.handoff`（段名与出口分类的唯一来源）推。
-#: 原来这里手抄了一组开场白做前缀匹配，2026-11-02 回执一改格式就**一条都不中**
+#: 原来这里手抄了一组开场白做前缀匹配，回执一改格式就**一条都不中**
 #: （实测：新格式 0/8、旧格式 38/38）—— 而且**不会报错，只会静默失效**。
 _RECEIPT_KINDS: dict[str, str] = {
     "completed": "✅ **交付回执**（执行器已写入产物库 —— 平台只说这个事实）",
     "waiting": "❓ **执行器申报要信息**（`ask_user`：平台先试答，答不上转达给用户）",
     "failed": "⚠️ **既没交付、也没说要什么**（推满轮次，交给主 agent 判）",
-    # ⚠️ **2026-11-05 补**：`fault` 是 2026-11-04 新加的出口，加的时候**漏了这两张表** ——
-    #    于是 `_run.md` 里那条回执**没有出口标记**、段标签回落成裸 key `fault`。
-    #    这是"一套，别分叉"在**审计层**的复现（第一次加新出口就漏了）——
-    #    现在由 `unit_receipt` ⑤ 的覆盖性断言盯着（漏一个当场红）。
+    # ⚠️ `fault` 是后加的出口，加的时候**漏了这两张表** —— 于是 `_run.md` 里那条回执
+    #    **没有出口标记**、段标签回落成裸 key。这是"一套，别分叉"在**审计层**的复现
+    #    （第一次加新出口就漏了）—— 覆盖性要有检查盯着（漏一个要能发现）。
     "fault": "⚠️ **平台故障**（这一轮**没跑成** —— 不是执行器干不了）",
     "rejected_skill": "⛔ **被平台拒绝**：没有这个技能",
     "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
@@ -561,15 +531,14 @@ def _injected_label(tag: str | None) -> str:
 def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
     """**回执对象** → 「哪一段 / 写了什么」若干段。
 
-    用户要求：*"哪些是提问 来源是哪里"* —— 回执里混着平台的框架话和执行器的原话，
-    不拆开就只能靠读者从一大段文字里猜哪句是谁说的。
+    回执里混着平台的框架话和执行器的原话，不拆开就只能靠读者从一大段文字里猜
+    哪句是谁说的。
 
-    🔴 **读对象，不读文本**（用户 2026-11-03：*"禁止你反结构化任何 llm 正文输出"*）。
-    原来这里靠**解析渲染出来的文本**（`_split_receipt` 按段名切），
-    2026-11-02 回执一改措辞就**全部静默失效**（实测：新格式 0/8 命中、旧格式 38/38），
-    后果是回执在 `_run.md` 里既丢了"谁写的"分段、又掉进 1200 字兜底截断
-    （实测一次把 **12560 字切成 1200**）。**那条路已经删掉** ——
-    结构一旦渲染成文本就回不去了，不要试图解析回来。
+    🔴 **读对象，不读文本**（用户：*"禁止你反结构化任何 llm 正文输出"*）。
+    原来这里靠**解析渲染出来的文本**（按段名切），回执一改措辞就**全部静默失效**
+    （实测：新格式 0/8 命中、旧格式 38/38），后果是回执在 `_run.md` 里既丢了
+    "谁写的"分段、又掉进 1200 字兜底截断（实测一次把 **12560 字切成 1200**）。
+    **那条路已经删掉** —— 结构一旦渲染成文本就回不去了，不要试图解析回来。
     """
     from sxagent.handoff import HOPS
 
@@ -581,8 +550,8 @@ def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
 def _turn_summary(turns: list[dict], i: int) -> list[str]:
     """每轮开头的小结 —— 回答"系统反问了吗 / 用户输入是谁给的 / 平台做了什么"。
 
-    用户要求（2026-10-29）：*"skill 里面不是有提问嘛…它是否反问了 是否用户输入了
-    是不是你模拟用户输入的"* —— **测试里的"用户"是 case YAML 里预置的字符串，
+    用户要求：*"skill 里面不是有提问嘛…它是否反问了 是否用户输入了
+    是不是你模拟用户输入的"* —— **测试里的"用户"是预置的字符串，
     不是真人即时输入**，这一点必须在日志里说清楚，否则读的人会以为看到了真实交互。
     """
     t = turns[i]
@@ -609,7 +578,7 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
         else "- 本轮输入：**测试脚本预置**（`evals/cases/*.yaml` 的 `turns` 里写死的字符串）"
         "，**不是真人即时输入**"
     )
-    # ⚠️ 这里原来是从日志句子里 `split('→')[-1]` 切出"平台动作"那句话 —— 反解析（判据一）。
+    # ⚠️ 这里原来是从日志句子里 `split('→')[-1]` 切出"平台动作"那句话 —— 反解析。
     #    现在读对象，自己渲染一句。
     own = (
         (t.get("actions") or [])[len(prev.get("actions") or []) :] if prev else (t.get("actions") or [])
@@ -715,7 +684,7 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
         "",
     ]
     if tool in ("read_artifact", "read_skill"):
-        # 🔴 正文/原文**不进日志**（用户要求：只写"读了啥、谁读的"）——
+        # 🔴 正文/原文**不进日志**（只写"读了啥、谁读的"）——
         # 产物落盘在 `art_*`，技能原文在 `skills/`，都另有出处。
         what = "产物" if tool == "read_artifact" else "技能"
         key = "artifact_id" if tool == "read_artifact" else "skill_name"
@@ -736,7 +705,7 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
             out += [f"　{label}：", "", "```", text, "```", ""]
     elif tool == "delegate":
         # 走不到：所有 delegate 返回都经 `_cmd` 带上对象。真到了这里说明**机制破了** ——
-        # 如实说出来，**不要**退回解析文本（那正是 2026-11-02 那次事故的做法）。
+        # 如实说出来，**不要**退回解析文本（那正是回执反解析那次事故的做法）。
         out += [
             "⚠️ **这条回执没有结构化对象**（机制破了，不该发生）—— 原文照录，不做解析：",
             "",
@@ -772,9 +741,9 @@ def _render_system(m: dict, n: int) -> tuple[list[str], int]:
 def _render_unknown(m: dict, n: int) -> tuple[list[str], int]:
     """**未知消息类型**的兜底。
 
-    ⚠️ 切了**必须标**（交接三问②，用户 2026-11-02）：一声不吭的一刀，读的人分不清
+    ⚠️ 切了**必须标**（用户定的规矩）：一声不吭的一刀，读的人分不清
     "它就这么多"和"被切了"，而这两种情况该做的决定不同。
-    （`docs/handoff-audit.md` H19 记的就是这一处 —— 它是审计里**最后一处**静默截断。）
+    （这一处曾是交接审计里**最后一处**静默截断。）
     """
     content = str(m.get("content") or "")
     n += 1
@@ -792,11 +761,11 @@ def _render_unknown(m: dict, n: int) -> tuple[list[str], int]:
 def _render_messages(turn: dict) -> list[str]:
     """把本轮消息渲染成**带来源与类型**的记录。
 
-    用户要求（2026-10-29）：*"哪些是推理 哪些是正文 是哪个在推理 哪个在输出也不知道
+    用户要求：*"哪些是推理 哪些是正文 是哪个在推理 哪个在输出也不知道
     哪些是提问 来源是哪里 哪些是用户输入"* —— 所以每条都要能看出
     **谁说的（来源）+ 说的是什么性质（类型）**，不能只丢一个 `AIMessage` 类型名。
 
-    ⚠️ **它自己只做分发**（2026-11-09 拆）：四种消息各有一个渲染器
+    ⚠️ **它自己只做分发**：四种消息各有一个渲染器
     （`_render_ai` / `_render_tool` / `_render_system` / `_render_unknown`），
     配对状态在 `_ToolPairing` 里。原来是一个 118 行的函数，三样缠在一起。
     """
@@ -846,8 +815,8 @@ def _task_table(tasks: list[dict]) -> list[str]:
     lines = [
         "### Task 台账",
         "",
-        # ⚠️ 2026-11-05 判定退休：原来还有一列「进度 / 还缺」（判定给的）—— 没有来源了，
-        #    整列删掉；执行器的原话在下面每个 Task 的 `<details>` 里有**全文**（不用再列一遍）。
+        # ⚠️ 判定退休后原来那列「进度 / 还缺」没有来源了，整列删掉；
+        #    执行器的原话在下面每个 Task 的 `<details>` 里有**全文**。
         "| Task | 技能 | 状态 | **产出** | **输入引用** |",
         "|---|---|---|---|---|",
     ]
@@ -874,12 +843,12 @@ def _task_table(tasks: list[dict]) -> list[str]:
 def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None:
     """落盘**运行全记录**（一个 run 就这一份）—— 人工审计"过程对不对、交接了什么"。
 
-    用户要求（2026-10-29）：*"不能遗漏任何关键分支 软硬判断尤为关键
+    用户要求：*"不能遗漏任何关键分支 软硬判断尤为关键
     信息交接的地方 交接了什么也很关键 用户输入 ai输出 工具调用 诸如此类"*、
     *"日志你为啥要搞几个 放一起可以不"*。
 
-    结构（后续由父进程追加）：① 概览 → ② 运行全记录（按轮）→ ③ 软判断留档（`judge.py` 追加）
-    → ④ 原始 trace 附录（`run.py` 追加）。
+    结构（后续由父进程追加）：① 概览 → ② 运行全记录（按轮）→ ③ 软判断留档
+    → ④ 原始 trace 附录（各自追加）。
     """
     d = out_dir / "artifacts" / f"{case_id}__r{rep}"
     d.mkdir(parents=True, exist_ok=True)
@@ -913,12 +882,10 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
 def append_trace(result: dict, tag: str) -> None:
     """把该 run 的**原始 trace** 作为附录并进它自己的 `_run.md`（一份文件读完）。
 
-    顺序：概览 → 逐轮全记录（子进程写）→ 软判断留档（`judge._log` 追加）→ 本附录。
+    顺序：概览 → 逐轮全记录（子进程写）→ 软判断留档 → 本附录。
 
-    ⚠️ **它原来叫 `evals.run._append_trace`**（跑批模块里的私有名）—— 但它是
-    **渲染运行记录**的活儿，和 `dump_run_record` 是一件事，产品入口也要用。
-    住在那儿就逼出 `app/chat.py` 的 `from evals.run import _append_trace`：
-    **产品 import 测试包**。〔沿革 3〕
+    ⚠️ 它是**渲染运行记录**的活儿，和 `dump_run_record` 是一件事，交互式入口也要用 ——
+    所以住在这儿，**不许**让交互式入口反过来 import 跑批模块（那是"产品依赖测试"）。
     """
     src = result.get("trace_log")
     if not src or not Path(src).exists():
@@ -934,5 +901,3 @@ def append_trace(result: dict, tag: str) -> None:
         )
         fh.write(Path(src).read_text(encoding="utf-8", errors="replace"))
         fh.write("\n````\n")
-
-
