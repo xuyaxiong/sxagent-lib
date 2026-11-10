@@ -1,0 +1,31 @@
+[project]
+name = "sxagent-lib"
+version = "0.1.0"
+description = "多 Skill Agent 库：Skill（专业能力）/ Task（业务工作）/ Sub Agent（可选执行者）三者正交——平台管机制，skill 管业务"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=1.4.7",
+    "langchain-openai>=1.7.3",
+    "langgraph>=1.2.18",
+    "python-dotenv>=1.2.4",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
+    "pytest>=9.1.1",
+    "ruff",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# 起步配置；S6（测试与工具链重构）统一应用与调参
+select = ["E", "F", "W", "I", "UP", "B", "T20"]
+ignore = ["E501"]  # 行长交给 formatter
+
+[tool.pytest.ini_options]
+# tests/ 在 S6 建立（pytest 重写旧单测）；此配置先行占位
+testpaths = ["tests"]
