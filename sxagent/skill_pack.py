@@ -2,13 +2,13 @@
 
 一个技能 = 一个文件夹：
 
-    lesson-prep/
+    my-skill/
     ├── SKILL.md               ← 入口，**只有这一个名字**；frontmatter 给 name/description，正文即 instructions
     ├── references/            ← **可选**，没有就没有（不是错误）
-    │   ├── 教学目标编写指南.md
-    │   └── 教案结构模板.md
+    │   ├── 写作规范.md
+    │   └── 结构模板.md
     └── assets/                ← 目录名随作者，**整个包都能读**
-        └── 教案汇总模板.md
+        └── 汇总模板.md
 
 ## 这个文件是什么
 
@@ -198,7 +198,7 @@ async def read_skill(skill_name: str) -> str:
 async def read_skill_file(skill_name: str, path: str) -> str:
     """读技能包里某个**文件的全文**（渐进式披露第三层）。
 
-    技能自带的规范 / 模板 / 标准（如《教案结构模板》《评分标准》《学科课标》）——
+    技能自带的规范 / 模板 / 标准（如《结构模板》《格式规范》《术语表》）——
     路径就是 `SKILL.md` 里写的那个（形如 `references/xxx.md`）。
     清单在 `read_skill` 的返回里（派给执行器的任务书里也有一份）。
 

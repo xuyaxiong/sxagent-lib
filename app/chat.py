@@ -1,4 +1,4 @@
-"""交互式跑原型（**验证 CLI 入口**，打包打的就是它）—— **你当用户**，技能从一个文件夹全量注入。
+"""交互式对话（**验证 CLI 入口**，打包打的就是它）—— **你当用户**，技能从一个文件夹全量注入。
 
     uv run python -m app.chat                      # 默认 skills/
     uv run python -m app.chat --skills 别的目录
@@ -93,7 +93,7 @@ _SKILL_DESC_COLOR = "\033[90m"   # 暗灰：一句话说明
 def _print_skills(skills, indent: str = "   ") -> None:
     """打技能清单：**名字一行、说明一行**，名字亮、说明暗。
 
-    原来挤在一行（`· AI 备课　根据学科、年级、课题生成教案`），中英混排一长就糊成一片。
+    原来挤在一行（`· 技能名　一句话说明`），中英混排一长就糊成一片。
     """
     for s in skills:
         head, detail = _skill_label(s)
@@ -106,7 +106,7 @@ def _skill_label(skill) -> tuple[str, str]:
     """技能 →（**一句话能干什么**，细节）。
 
     按 `description` 的**第一个 `：`** 切 —— 技能作者本来就是这么写的
-    （"AI 备课：根据学科、年级、课题生成教案"）。**不写死任何技能名**：
+    （"技能名：一句话说明它能干什么"）。**不写死任何技能名**：
     用户自己加的技能也走这条，没有 `：` 就退回用 `name`。
 
     细节截到 68 列：开场白是给人扫一眼的，不是技能说明书。
@@ -754,7 +754,7 @@ class _Session:
 
 def _parse_args() -> argparse.Namespace:
     """命令行参数 —— 只有三个（技能目录 / 会话标识 / 执行路径）。"""
-    ap = argparse.ArgumentParser(description="交互式跑原型（你当用户；技能从文件夹加载）")
+    ap = argparse.ArgumentParser(description="交互式对话（你当用户；技能从文件夹加载）")
     ap.add_argument(
         "--skills",
         default=str(DEFAULT_SKILLS_DIR),

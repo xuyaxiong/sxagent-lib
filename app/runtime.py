@@ -575,7 +575,7 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
     out.append(
         "- 本轮输入：**真人当场输入**（`app.chat` 交互式跑，不是预置脚本）"
         if human
-        else "- 本轮输入：**测试脚本预置**（`evals/cases/*.yaml` 的 `turns` 里写死的字符串）"
+        else "- 本轮输入：**脚本预置**（跑批 case 里写死的字符串）"
         "，**不是真人即时输入**"
     )
     # ⚠️ 这里原来是从日志句子里 `split('→')[-1]` 切出"平台动作"那句话 —— 反解析。

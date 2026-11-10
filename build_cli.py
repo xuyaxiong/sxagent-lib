@@ -115,7 +115,7 @@ def _stash_user_data(built: Path, stash: Path, moved: list[str]) -> None:
             # **这里不硬来**：说清怎么办，已经挪走的交给 `finally` 放回去。
             raise RuntimeError(
                 f"挪不动 {src}（{e}）\n"
-                f"  ⚠️ 多半是**打好的 exe 还在跑** —— 它占着 `runs/` 里的文件。\n"
+                f"  ⚠️ 多半是**打好的程序还在跑** —— 它占着 `runs/` 里的文件。\n"
                 f"     先把它关掉；不想关就换个落点：`--out dist/_new`"
             ) from e
         moved.append(name)
@@ -209,14 +209,14 @@ def build(out_dir: Path | None = None) -> None:
     print(
         f"\n完成：{built}\n"
         f"  ⚠️ 发出去之前把 `.env` 填好放进这个目录（模板已给）\n"
-        f"  ⚠️ 告诉用户**整个文件夹拷走**，别只拷 exe"
+        f"  ⚠️ 告诉用户**整个文件夹拷走**，别只拷可执行文件"
     )
 
 
 if __name__ == "__main__":
     import argparse
 
-    ap = argparse.ArgumentParser(description="打包成能发给别人的 exe")
+    ap = argparse.ArgumentParser(description="打包成能发给别人的程序")
     ap.add_argument(
         "--out", type=Path, default=None,
         help="产物落到哪个 dist 目录（默认 dist/）。⚠️ **上一个包还在跑时必须指定**，"

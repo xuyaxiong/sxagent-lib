@@ -56,7 +56,7 @@ def stream_agent(graph, state, config, who: str, *, role: str):
     既不可读、又和已解开的展示重复。
 
     `role`：`trace.AGENT` / `trace.EXECUTOR`，**必填** —— 展示层按它归版式。
-    `who` 只是显示名（`执行器·lesson-prep`），**随便改，不影响任何逻辑**。
+    `who` 只是显示名（`执行器·some-skill`），**随便改，不影响任何逻辑**。
     """
     # 🔴 校验在**生成器外面**：漏传 / 传错立刻炸，而不是等第一次 next()。
     return _stream_with_retry(graph, state, config, who, trace.check_role(role, "stream_agent"))

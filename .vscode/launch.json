@@ -39,7 +39,7 @@
       "id": "sayText",
       "type": "promptString",
       "description": "这一轮说什么？",
-      "default": "帮我备课，三年级数学"
+      "default": "你好"
     }
   ]
 }

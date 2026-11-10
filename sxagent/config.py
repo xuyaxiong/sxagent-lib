@@ -82,7 +82,7 @@ def get_model(temperature: float = 0.0):
             "  MODEL_NAME      模型名\n"
             "  MODEL_API_KEY   API Key\n"
             "  MODEL_BASE_URL  兼容端点（可选）\n"
-            "\n（本原型没有 fake 模式 —— 见模块 docstring 的说明。）\n"
+            "\n（没有 fake 模式 —— 见模块 docstring 的说明。）\n"
         )
     # 🔴 **单次调用的读超时**（默认 300s）—— 卡住时的闸门在这儿，不在墙钟：
     #    墙钟在轮次之间查表，而卡住的是**一次阻塞调用**，轮次边界根本走不到。

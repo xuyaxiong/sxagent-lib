@@ -1,10 +1,10 @@
-"""**交互式跑原型**（**裸原型**入口）。
+"""**内置技能入口**（**最简装配**）。
 
-    uv run python -m sxagent                          # 交互式
-    uv run python -m sxagent --say "帮我备课，三年级数学"   # 单轮
+    uv run python -m sxagent                # 交互式
+    uv run python -m sxagent --say "你好"    # 单轮
 
 ⚠️ **验证 CLI 入口是 `app/chat.py`**（打包打的就是它，见 `build_cli.py`）—— 这里是
-**内置玩具技能、显示层最简**的那个入口，用来快速看机制。
+**只装内置技能、显示层最简**的那个入口，用来快速看机制。
 
 ## 这个文件是什么
 
@@ -245,9 +245,9 @@ def _say_mode(graph, config, args: argparse.Namespace) -> None:
 def _interactive(graph, config) -> None:
     """**交互循环** —— 读一句 → 跑一轮 → 摆待答。"""
     print("输入你的请求（空行退出）。试试这些：\n")
-    print("  · 你好                              → 主 agent 应该**自己答**（不建 Task）")
-    print("  · 帮我备课，三年级数学               → 需要专业技能 → 委派给隔离执行器")
-    print("  · 帮我备课、导学单，再出个随堂小测，三年级数学\n")
+    print("  · 你好                    → 主 agent 应该**自己答**（不建 Task）")
+    print("  · 帮我做 X                → 需要专业技能 → 委派给隔离执行器")
+    print("  · 帮我做 X、Y，再做个 Z\n")
     while True:
         try:
             text = input("👤 ").strip()
@@ -283,7 +283,7 @@ def _interactive(graph, config) -> None:
 
 
 def main() -> None:
-    """裸原型 CLI —— **装配 → 跑**（非交互 / 交互两条路），收尾关日志。
+    """内置技能 CLI —— **装配 → 跑**（非交互 / 交互两条路），收尾关日志。
 
     ⚠️ **它自己只做编排**：参数 / 装配 / 两种跑法各在一个私有件里。
     原来是一个 113 行的函数（`turn` 闭包 ＋ 两条路缠在一起）。

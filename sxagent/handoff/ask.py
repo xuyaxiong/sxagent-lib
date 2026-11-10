@@ -74,7 +74,7 @@ def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> st
     ⚠️ **走唯一那条渲染路**（`render_hop`）：段名 0 列 · 来源 2 列 · 段体 2 列。
     ⚠️ `asked` / `task` / `report` **三段和回执/委托书共用**（同一个语义一处定义）。
 
-    ⚠️ `skill_name` **跟着【任务】走**（"派给「lesson-prep」"那一行）——
+    ⚠️ `skill_name` **跟着【任务】走**（"派给「some-skill」"那一行）——
     它属于"这次要什么"，不单起一段；但**不能丢**：这一步是**独立调用**，
     模型手里没有 `delegate` 的工具上下文 —— 不写它，模型就不知道派给了谁。
 
