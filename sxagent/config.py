@@ -77,10 +77,10 @@ def get_model(temperature: float = 0.0):
     timeout_s = float(os.getenv("MODEL_TIMEOUT_S", "") or 300)
     return ChatOpenAI(
         model=name,
-        api_key=key,  # type: ignore[arg-type]
+        api_key=key,
         base_url=base or None,
         temperature=temperature,
-        timeout=timeout_s,  # type: ignore[arg-type]
+        timeout=timeout_s,
     )
 
 
