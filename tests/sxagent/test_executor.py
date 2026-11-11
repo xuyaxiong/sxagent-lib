@@ -47,6 +47,16 @@ def _skill(name: str, marker: str) -> Skill:
     return Skill(name=name, description=f"{marker} 的技能", instructions=f"任务标记：{marker}")
 
 
+async def test_the_injected_model_reaches_the_executor(no_default_model) -> None:
+    """注入的模型要真的用在执行器上 —— 默认模型那三处入口都换成了"一碰就抛"。"""
+    fake = ToolCallingFakeModel()
+
+    outcome = await run_task(_skill("skill-a", MARKER_A), "交接书", model=fake)
+
+    assert outcome.status == "completed"
+    assert fake.calls, "这一趟不是它跑的"
+
+
 async def test_two_runs_in_parallel_do_not_cross(monkeypatch) -> None:
     fake = ToolCallingFakeModel()
     monkeypatch.setattr("sxagent.executor.get_model", lambda *a, **k: fake)

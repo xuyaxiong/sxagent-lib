@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from sxagent.agent import build_user_turns
+from sxagent.agent import _AgentAnswer, build_user_turns, try_answer_then_rerun
+from sxagent.executor import ExecOutcome
+from sxagent.handoff.briefing import Task
+from sxagent.skills import Skill
+from tests.fakes import ToolCallingFakeModel
 
 
 def test_text_is_carried_verbatim() -> None:
@@ -38,6 +42,25 @@ def test_two_user_messages_in_a_row_do_not_share_one_context() -> None:
         [AIMessage("更早的一句"), HumanMessage("第一句"), HumanMessage("第二句")]
     )
     assert [t["after"] for t in out] == ["更早的一句", ""]
+
+
+async def test_the_injected_model_reaches_the_structured_call(no_default_model) -> None:
+    """试答那一步是结构化调用，也要走注入的模型 —— 没传下去就落回默认那个（会读 `.env`、连网）。"""
+    fake = ToolCallingFakeModel(structured={"_AgentAnswer": _AgentAnswer(can_answer=False)})
+    rec: Task = {"id": "t1", "skill": "哨兵技能"}
+    outcome = ExecOutcome(status="waiting_for_input", asked="缺课时")
+
+    got, answer = await try_answer_then_rerun(
+        rec,
+        Skill(name="哨兵技能", description="", instructions=""),
+        outcome,
+        messages=[],
+        model=fake,
+    )
+
+    assert (got, answer) == (outcome, "")  # 答不上：原样返回，由调用方登记待答
+    # 断"它被调过"而不是"没炸"：`safe_structured` 把异常全吞了，落回默认模型炸了也长这样
+    assert fake.structured_calls == 1
 
 
 def test_only_human_messages_count_as_user_words() -> None:

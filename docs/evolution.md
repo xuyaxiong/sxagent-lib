@@ -62,9 +62,9 @@
 
 接口清单与 `build(...)` 的签名，动工前摆出来过一遍再写。
 
-已经落地的注入点：产物库（`ArtifactStore`）、技能来源（`SkillSource`）、checkpointer 与长期
-记忆的口子、宿主的领域工具（`tools=`）。还没落：模型（`get_model()` 还是模块级函数，宿主只能
-打桩）、日志与产物目录（`app_root()`）、`__init__` 的导出面。
+已经落地的注入点：模型（`BaseChatModel` 实例，主 agent / 执行器 / 试答三处共用）、产物库
+（`ArtifactStore`）、技能来源（`SkillSource`）、checkpointer 与长期记忆的口子、宿主的领域工具
+（`tools=`）。还没落：日志与产物目录（`app_root()`）、`__init__` 的导出面。
 
 ## 近期
 

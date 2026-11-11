@@ -847,8 +847,8 @@ def main() -> None:
     inst = install(
         {"skills_dir": args.skills, "skills_mode": "replace", "exec_path": args.exec_path}
     )
-    # 技能来源与产物库由 `install()` 造好、注入进来：库那两处不认全局表。
-    graph = build(artifacts=inst["store"], skills=inst["skills"])
+    # 模型、产物库、技能来源都由 `install()` 造好、注入进来：库那几处不认全局表。
+    graph = build(model=inst["model"], artifacts=inst["store"], skills=inst["skills"])
     config = {"configurable": {"thread_id": args.thread}}
     session.use(args.thread)  # 进程就是一次会话：thread_id 进事件、日志带标识
 

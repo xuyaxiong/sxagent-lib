@@ -209,30 +209,23 @@ def _record_run_tasks() -> list[dict[str, object]]:
     return run_tasks
 
 
-def _count_tokens() -> UsageCounter:
-    """token 与调用计数：三处值导入一起换（`agent` / `executor` / `llm`）。漏一处，那条路上
-    的调用就不计费。"""
-    import sxagent.agent
-    import sxagent.config
-    import sxagent.executor
-    import sxagent.llm
+def _count_tokens():
+    """token 与调用计数：给注入的模型挂一个计数器。
+
+    主 agent、执行器、试答三处用的是同一个注入实例，所以挂一次就全覆盖（以前要打三处桩，
+    漏一处那条路的调用就不计费）。
+    """
+    from sxagent.config import get_model
 
     counter = UsageCounter()
-    orig_get_model = sxagent.config.get_model
-
-    def counting(temperature: float = 0.0):
-        return orig_get_model(temperature).model_copy(update={"callbacks": [counter]})
-
-    sxagent.agent.get_model = counting
-    sxagent.executor.get_model = counting
-    sxagent.llm.get_model = counting
-    return counter
+    model = get_model().model_copy(update={"callbacks": [counter]})
+    return model, counter
 
 
 def install(case: dict[str, object]) -> dict[str, object]:
     """装好全部观测与注入，必须在 `build()` 之前调用。
 
-    返回里的 `store` 与 `skills` 要原样交给 `build()` —— 库那两处只认注入进来的东西。
+    返回里的 `model` / `store` / `skills` 要原样交给 `build()` —— 库那几处只认注入进来的东西。
     """
     import sxagent.agent
 
@@ -247,12 +240,13 @@ def install(case: dict[str, object]) -> dict[str, object]:
     # ④ 执行路径开关（case 可选），默认 auto（两条路都开）。想验执行器的正文交付就得让
     # 委派真的发生，靠碰运气压路径的断言必然脆。见 `sxagent/agent.EXEC_PATH`。
     sxagent.agent.EXEC_PATH = str(case.get("exec_path") or "auto")
-    # ④′ token / 调用计数
-    counter = _count_tokens()
+    # ④′ 模型：token / 调用计数挂在注入的那个实例上
+    model, counter = _count_tokens()
 
     # ⑤ 故障注入不在这里：返回的 `fault` / `stream_fault` 是留给故障注入的旋钮 —— 往这两个
     #    dict 里写就行（同一个对象，运行记录照旧带着它们），目前还没有调用方。
     return {
+        "model": model,
         "counter": counter,
         "store": store,
         "skills": skills,

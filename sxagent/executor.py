@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from sxagent import stream, trace
@@ -207,11 +208,12 @@ def _build_executor(
     asked: dict[str, str],
     artifacts: ArtifactStore,
     skills: SkillSource,
+    model: BaseChatModel | None,
 ):
     """建执行器那个子 agent：工具表加平台规则。
 
     `created` / `asked` 是工具闭包，两者得绑在同一份闭包上；产物那两个工具落在注入的产物库上，
-    读技能文件那个落在注入的技能来源上。
+    读技能文件那个落在注入的技能来源上；`model` 不给就用库自带那个。
     """
     tools = [
         make_write_artifact(created, store=artifacts),
@@ -222,7 +224,7 @@ def _build_executor(
     if user_turns:
         tools.append(_user_turn_reader(user_turns))
     return create_agent(
-        get_model(),
+        model or get_model(),
         tools=tools,
         system_prompt=_PLATFORM_RULE,
         name="executor",
@@ -235,11 +237,12 @@ def _open_run(
     user_turns: list[Turn] | None,
     artifacts: ArtifactStore,
     skills: SkillSource,
+    model: BaseChatModel | None,
 ) -> tuple[_Run, CompiledStateGraph]:
     """准备：建 agent、渲染这一趟的输入、写开跑前那几条日志。返回 `(运行态, agent)`。"""
     created: list[str] = []
     asked: dict[str, str] = {}
-    agent = _build_executor(user_turns, created, asked, artifacts, skills)
+    agent = _build_executor(user_turns, created, asked, artifacts, skills, model)
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
     # 技能自带文件时把清单（路径 + 字数）一起给执行器，正文按需 `read_skill_file` 读。
@@ -449,16 +452,17 @@ async def run_task(
     *,
     artifacts: ArtifactStore = DEFAULT_STORE,
     skills: SkillSource = DEFAULT_SOURCE,
+    model: BaseChatModel | None = None,
 ) -> ExecOutcome:
     """通用执行器：干活、判定出口、没出口就推它继续。
 
     `briefing` 是整份交接而不是增量——执行器用完即弃，每次都是重入。平台不解析、不抽取，
     原样带过去。`user_turns` 只给 `read_user_turn` 用，交接书里只渲染清单，全文按需取。
-    产物落进注入的 `artifacts`，技能自带文件按注入的 `skills` 读。
+    产物落进注入的 `artifacts`，技能自带文件按注入的 `skills` 读，模型用注入的 `model`。
 
     它自己只做编排：准备 → `for 轮次: 跑一轮 → 判出口` → 收尾。
     """
-    run, agent = _open_run(skill, briefing, user_turns, artifacts, skills)
+    run, agent = _open_run(skill, briefing, user_turns, artifacts, skills, model)
     for round_i in range(MAX_REACT_ROUNDS):
         resp = await _run_round(run, agent, round_i)
         if resp is None:  # 没跑成（墙钟 / 异常 / 空流）—— 故障已经记进 outcome

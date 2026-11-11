@@ -81,10 +81,10 @@ def test_the_injected_skill_source_reaches_the_agent(monkeypatch) -> None:
 
 
 async def test_the_feed_path_uses_the_injected_store_and_source(monkeypatch) -> None:
-    """投递那条路也要走注入：查技能按注入的来源，产物落进注入的库。
+    """投递那条路也要走注入：查技能按注入的来源，产物落进注入的库，模型用注入的那个。
 
-    两个都得断 —— 少穿一个参数，用户答复后的那次重跑就会写进库自带的产物库、按库自带的
-    技能表查技能，而这条路上没有任何报错。
+    三个都得断 —— 少穿一个参数，用户答复后的那次重跑就会写进库自带的产物库、按库自带的
+    技能表查技能、用库自带的模型，而这条路上没有任何报错。
     """
     seen: dict[str, object] = {}
 
@@ -96,7 +96,8 @@ async def test_the_feed_path_uses_the_injected_store_and_source(monkeypatch) -> 
     monkeypatch.setattr("sxagent.executor.run_task", fake_run_task)
     store = _SpyStore()
     source = LocalSkills({"哨兵技能": Skill("哨兵技能", "一句话", "哨兵指令")})
-    node = graph._make_node_feed(store, source)
+    model = object()  # 这一跳只验"带过去了没有"，所以随便一个哨兵就够
+    node = graph._make_node_feed(store, source, model)
 
     await node(
         {
@@ -109,6 +110,20 @@ async def test_the_feed_path_uses_the_injected_store_and_source(monkeypatch) -> 
     assert seen["skill"] == "哨兵技能"  # 技能是照注入的来源查出来的
     assert seen["artifacts"] is store
     assert seen["skills"] is source
+    assert seen["model"] is model
+
+
+async def test_the_injected_model_reaches_the_main_agent(no_default_model) -> None:
+    """注入的模型要真的用在主 agent 上 —— 默认模型那三处入口都换成了"一碰就抛"。"""
+    fake = ToolCallingFakeModel()
+
+    app = graph.build(model=fake)
+    await app.ainvoke(
+        {"messages": [HumanMessage("哨兵-A 的问题")]},
+        {"configurable": {"thread_id": "test-inject-model"}},
+    )
+
+    assert fake.calls, "这一步不是它跑的"
 
 
 class _FakeAgent:

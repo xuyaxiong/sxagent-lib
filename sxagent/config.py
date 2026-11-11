@@ -3,7 +3,8 @@
     MODEL_NAME / MODEL_API_KEY / MODEL_BASE_URL / MODEL_TIMEOUT_S / SXAGENT_LOG_PROMPT
 
 配置和环境的唯一出处：`.env` 从哪读（`app_root`）、随包的只读资源在哪（`RESOURCE_ROOT`）、
-三路标准流的编码、`get_model()` 造出的那个 chat model。不碰业务。
+三路标准流的编码、`get_model()` 造出的那个 chat model。不碰业务。模型本身可由宿主注入
+（`build(model=…)`）—— 注入了就全程不碰 `.env`。
 
 ## 不变量
 
@@ -11,7 +12,8 @@
 2. 三个流都设 UTF-8。缺哪个坏哪种。
 3. 只走真实的 LLM 调用，不设 fake 开关。假的只假一半，给的是假信号。
 4. 单次调用有读超时（`MODEL_TIMEOUT_S`）。墙钟只在轮次之间查，治不了一次卡住的调用。
-5. 环境变量的名字只许有一处定义。"""
+5. 环境变量的名字只许有一处定义。
+6. `.env` 不在 import 时读（`load_env`），免得宿主只是 import 就被动了进程环境。"""
 
 from __future__ import annotations
 
@@ -38,8 +40,16 @@ def app_root() -> Path:
 #: 打包后随包带的只读资源在 `sys._MEIPASS`（PyInstaller 的解包目录），开发时就是应用根。
 RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "_MEIPASS", "") else app_root()
 
-#: 显式指定路径，不让它去猜 cwd —— 打包后"从哪双击"都不该影响读不读得到配置。
-load_dotenv(app_root() / ".env")
+
+@lru_cache(maxsize=1)
+def load_env() -> None:
+    """读程序旁边那个 `.env`（只读一次，显式指定路径，不让它去猜 cwd）。
+
+    不在 import 时读：宿主注入模型（`build(model=…)`）时，这个库不该动它的进程环境。
+    第一次真要用到配置（造模型 / 报配置 / 看日志开关）时才读。
+    """
+    load_dotenv(app_root() / ".env")
+
 
 # 三个流都设 UTF-8。stderr 缺了，报错会落回系统编码（中文 Windows 上是 GBK），
 # "报错"和"正常输出"在同一份重定向里就是两种编码；stdin 缺了，管道喂进来的中文按 GBK 解，
@@ -56,6 +66,7 @@ def get_model(temperature: float = 0.0):
     """返回一个 OpenAI 兼容的 chat model（同一温度只建一次）。"""
     from langchain_openai import ChatOpenAI
 
+    load_env()
     name = os.getenv("MODEL_NAME", "").strip()
     key = os.getenv("MODEL_API_KEY", "").strip()
     base = os.getenv("MODEL_BASE_URL", "").strip()
@@ -86,6 +97,7 @@ def get_model(temperature: float = 0.0):
 
 def describe() -> str:
     """返回一行配置描述，便于运行时确认用的哪个模型。"""
+    load_env()
     name = os.getenv("MODEL_NAME", "?")
     base = os.getenv("MODEL_BASE_URL", "").strip() or "api.openai.com"
     return f"{name} @ {base}"
@@ -101,4 +113,5 @@ def log_prompt_verbatim() -> bool:
     开关；没有那条 note 才是违反。
     故意不缓存：测试要能当场翻它。
     """
+    load_env()
     return os.getenv("SXAGENT_LOG_PROMPT", "").strip().lower() in {"1", "true", "yes", "on"}

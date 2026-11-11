@@ -15,6 +15,8 @@ from __future__ import annotations
 import time
 import warnings
 
+from langchain_core.language_models import BaseChatModel
+
 from sxagent import trace
 from sxagent.config import get_model, log_prompt_verbatim
 
@@ -29,6 +31,7 @@ async def safe_structured[T](
     prompt: str,
     default: T,
     *,
+    model: BaseChatModel | None = None,
     tag: str = "",
     kind: str = "",
     log_prompt: bool = True,
@@ -43,6 +46,7 @@ async def safe_structured[T](
         schema: Pydantic 模型类。
         prompt: 提示词全文。
         default: 重试仍失败时的返回值 —— 必须是保守的那个。
+        model: 宿主注入的模型；不给就用库自带那个（`config.get_model`，读 `.env`）。
         tag: 日志里显示的标题。
         kind: 这次调用的语义标签 —— 原样发给 section 事件；它的 PROMPT / RESPONSE 块一律带
             `kind="llm_io"`，展示层据此归并成同一块。
@@ -78,7 +82,7 @@ async def safe_structured[T](
         # 秒数 —— 日志里那个数字会骗人。
         t0 = time.time()
         try:
-            r = await get_model().with_structured_output(schema).ainvoke(prompt)
+            r = await (model or get_model()).with_structured_output(schema).ainvoke(prompt)
             # `None` 也算失败：`with_structured_output` 在模型返回空的时候可能返回 `None`
             # 而不抛 —— 那样调用方下一行直接 AttributeError、整轮失败，而这条路上
             # `safe_structured` 的全部意义就是"别让一次抖动导致整轮失败"。

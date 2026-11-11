@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain.tools import ToolRuntime, tool
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
@@ -167,7 +168,11 @@ class _AgentAnswer(BaseModel):
 
 
 async def _ask_main(
-    messages: list[BaseMessage], skill_name: str, task: str, outcome: Outcome
+    messages: list[BaseMessage],
+    skill_name: str,
+    task: str,
+    outcome: Outcome,
+    model: BaseChatModel | None,
 ) -> str:
     """平台强制的一步：让主 agent 用它自己的上下文，试着补上执行器缺的那条信息。
 
@@ -187,6 +192,7 @@ async def _ask_main(
         _AgentAnswer,
         prompt,
         _AgentAnswer(can_answer=False),
+        model=model,
         tag=_ASK_STEP,
         kind="ask_main",
         # 返回不原样再记：下面那条决策记录里已有排好版的「结果」，再来一条 repr 就是两副
@@ -231,13 +237,14 @@ async def try_answer_then_rerun(
     messages: list[BaseMessage],
     artifacts: ArtifactStore = DEFAULT_STORE,
     skills: SkillSource = DEFAULT_SOURCE,
+    model: BaseChatModel | None = None,
 ) -> tuple[Outcome, str]:
     """执行器说「缺信息」→ 主 agent 先试答 → 答得上就带回去重跑一遍。
 
     首次派发和投递重跑共用这一套。返回 `(最终 outcome, 试答)`；试答为空表示答不上，由
     调用方登记待答。
     """
-    answer = await _ask_main(messages, skill.name, rec.get("task") or "", outcome)
+    answer = await _ask_main(messages, skill.name, rec.get("task") or "", outcome, model)
     if not answer:
         return outcome, ""
     # 成对记：只记答案的话，下次重入时 `report` 已被新问题覆盖，这条答案就没了指涉。
@@ -250,6 +257,7 @@ async def try_answer_then_rerun(
         rec.get("user_turns"),
         artifacts=artifacts,
         skills=skills,
+        model=model,
     )
     return o2, answer
 
@@ -263,6 +271,7 @@ async def dispatch(
     messages: list[BaseMessage],
     artifacts: ArtifactStore = DEFAULT_STORE,
     skills: SkillSource = DEFAULT_SOURCE,
+    model: BaseChatModel | None = None,
 ) -> tuple[Outcome, str, list[Task]]:
     """派发编排，`delegate` 与 `graph._feed_waiting` 共用的那一段。
 
@@ -278,13 +287,14 @@ async def dispatch(
         rec.get("user_turns"),
         artifacts=artifacts,
         skills=skills,
+        model=model,
     )
     absorb_outcome(rec, outcome)
     rec["run_by"] = trigger
     answer = ""
     if outcome.status == "waiting_for_input":
         outcome, answer = await try_answer_then_rerun(
-            rec, skill, outcome, messages=messages, artifacts=artifacts, skills=skills
+            rec, skill, outcome, messages=messages, artifacts=artifacts, skills=skills, model=model
         )
     settle(rec, outcome)
     mooted = moot_older_waiting(rec, tasks) if outcome.status == "completed" else []
@@ -492,7 +502,11 @@ def _reply(
     return _out(runtime, rec, superseded, outcome, note=next_note("failed"), artifacts=artifacts)
 
 
-def make_delegate(store: ArtifactStore = DEFAULT_STORE, source: SkillSource = DEFAULT_SOURCE):
+def make_delegate(
+    store: ArtifactStore = DEFAULT_STORE,
+    source: SkillSource = DEFAULT_SOURCE,
+    model: BaseChatModel | None = None,
+):
     """造一个 `delegate` 工具，落在给定的产物库与技能来源上。
 
     准入要按来源查技能在不在、按产物库查产物在不在，回执要按产物库列清单。
@@ -568,6 +582,7 @@ def make_delegate(store: ArtifactStore = DEFAULT_STORE, source: SkillSource = DE
             messages=runtime.state.get("messages") or [],
             artifacts=store,
             skills=source,
+            model=model,
         )
 
         # ④ 回话 —— 按三态说回主 agent（穷举，没有第四种）。
@@ -593,21 +608,23 @@ def make_delegate(store: ArtifactStore = DEFAULT_STORE, source: SkillSource = DE
 EXEC_PATH = "auto"
 
 
-def _tools_for(exec_path: str, store: ArtifactStore, source: SkillSource) -> list[BaseTool]:
+def _tools_for(
+    exec_path: str, store: ArtifactStore, source: SkillSource, model: BaseChatModel | None
+) -> list[BaseTool]:
     """这条执行路径给哪些工具。改这里时想清楚：拿掉某个工具会不会顺手拿掉一条合法能力。
 
     按装配现造（不缓存）：产物那几个工具闭包住注入的产物库，技能那两个闭包住注入的来源。
     """
     return {
         "auto": [
-            make_delegate(store, source),
+            make_delegate(store, source, model),
             make_write_artifact(store=store),
             make_read_artifact(store),
             make_list_artifacts(store),
             make_read_skill(source),
             make_read_skill_file(source),
         ],
-        "delegate": [make_delegate(store, source), make_list_artifacts(store)],
+        "delegate": [make_delegate(store, source, model), make_list_artifacts(store)],
         "inline": [
             make_write_artifact(store=store),
             make_read_artifact(store),
@@ -627,7 +644,7 @@ def tool_names() -> set[str]:
     return {
         tool.name
         for mode in ("auto", "delegate", "inline")
-        for tool in _tools_for(mode, DEFAULT_STORE, DEFAULT_SOURCE)
+        for tool in _tools_for(mode, DEFAULT_STORE, DEFAULT_SOURCE, None)
     }
 
 
@@ -711,19 +728,20 @@ def build_agent(
     *,
     artifacts: ArtifactStore = DEFAULT_STORE,
     skills: SkillSource = DEFAULT_SOURCE,
+    model: BaseChatModel | None = None,
     extra_tools: Sequence[BaseTool] = (),
 ) -> CompiledStateGraph:
     """主 agent：一个完整的 agent（工具 + 循环）。
 
     工具集 = `EXEC_PATH` 定的那组机制工具（`delegate` / `write_artifact` / …）**加上**宿主的
     领域工具；重名当场报错。机制工具不可摘：摘了机制就不完整，提示词里那些话也成了假话。
-    `artifacts` 是宿主注入的产物库，`skills` 是技能来源（磁盘 / OSS / 数据库），不传就用
-    库自带的。
+    `artifacts` 是宿主注入的产物库，`skills` 是技能来源（磁盘 / OSS / 数据库），`model` 是
+    模型实例 —— 三者不传就用库自带的。
     """
-    tools = [*_tools_for(EXEC_PATH, artifacts, skills), *extra_tools]
+    tools = [*_tools_for(EXEC_PATH, artifacts, skills, model), *extra_tools]
     _check_tool_names(tools)
     return create_agent(
-        get_model(),
+        model or get_model(),
         tools=tools,
         system_prompt=_MAIN_PROMPT
         + _MODE_NOTE.get(EXEC_PATH, "")

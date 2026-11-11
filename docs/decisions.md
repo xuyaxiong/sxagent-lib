@@ -104,6 +104,8 @@ state。这是接宿主时的一条选型提醒，不是性能缺陷。
 库要能顶掉现场产品（`sx-agent`）那套 harness：它的技能在 OSS 和数据库里，产物也落 OSS，
 本地 CLI 则是磁盘文件夹加文件系统。所以这两处收成接口，库自己的代码只认接口，宿主注入实现：
 
+- 模型：langchain 的 `BaseChatModel` 实例。主 agent、执行器、试答三处共用同一个；不给就用
+  `config.get_model()`（读 `.env`，单机自用那份）
 - `skills.SkillSource`：`get` / `values` / `files` / `read_file`，磁盘实现在 `skill_pack.py`
 - `artifacts.ArtifactStore`：`put` / `get` / `has` / `items` / `where` / `clear`，内存在
   `artifacts.py`
@@ -115,13 +117,17 @@ state。这是接宿主时的一条选型提醒，不是性能缺陷。
 接口各自的不变量写进 Protocol 的 docstring，那是实现方唯一的对照物：`read_file` 只认
 `files()` 报过的路径（路径穿越、二进制、超大文件全靠这一条挡），`put` 返回那一刻东西就得在。
 
+模型这一处还带出一条：`config.py` 原来在 import 那一刻就 `load_dotenv()`，宿主只要 import 这个
+库，进程环境就被动过。现在挪进 `load_env()`，第一次真要用到配置时才读 —— 注入了模型的宿主全程
+不碰 `.env`。
+
 技能这一处顺带删掉了三个换表口子（`registry.testing`）和那个模块本身（`registry.py`）。口子
 存在的理由是"全进程一张当前表"，而注入之后"换一批技能"就是换一个来源实例——构造比改全局
 直白，也不会再漏清另一个全局（`PACK_DIRS` 就漏过一次）。表回到 `skills.py` 里当字面量，
 读走 `builtin_skills()`：这一步之后没有任何东西在运行时改它，模块留着只会让名字骗人。
 
-这一层最容易破的地方是"收下了参数却没用"：`build(skills=…)` 曾漏穿过投递那条路（用户答复后
-的重跑），而它不报错。所以注入要断在**每条路**上，比身份（`is`）而不是比行为——传默认值进去
+这一层最容易破的地方是"收下了参数、却没往下传"：`build(skills=…)` 收下的来源曾没传到投递那条
+路（用户答复后的重跑），而它不报错。所以注入要断在**每条路**上，比身份（`is`）而不是比行为——传默认值进去
 等于没验。
 
 ## 模块怎么切
