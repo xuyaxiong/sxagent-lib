@@ -131,9 +131,12 @@ def _install_skills(case: dict) -> None:
 
     先 `reset()` 再叠加，`extra` 为空时也要 reset，同进程多 case 才不会串味。
     """
+    import sxagent.skill_pack
     import sxagent.skills
 
     registry.testing.reset()
+    # 技能包目录表也要清：它不归注册表管，不清会残留上一个 case 的包目录
+    sxagent.skill_pack.clear()
     extra: dict = {}
     if case.get("skills_dir"):
         extra.update(_load_skills_dir(str(case["skills_dir"])))

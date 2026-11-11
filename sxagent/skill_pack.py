@@ -167,6 +167,15 @@ async def read_skill_file(skill_name: str, path: str) -> str:
 # ──────────────────────────── 加载 ────────────────────────────
 
 
+def clear() -> None:
+    """清空包目录表 —— 换一批技能之前调它。
+
+    `registry.testing.reset()` 只管技能表，管不到这里；不清的话，上一个 case 的技能包目录
+    会留在表里（同进程跑多 case 时，`read_skill_file` 还能按旧路径读到已经换掉的包）。
+    """
+    PACK_DIRS.clear()
+
+
 def load_skill_pack(pack_dir: Path) -> tuple[Skill | None, list[str]]:
     """读一个技能包目录 →（`Skill`，说明/警告）。
 
