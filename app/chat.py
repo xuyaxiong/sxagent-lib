@@ -326,8 +326,13 @@ _LOG_ONLY_KINDS = frozenset({
     "nudge",   # 推执行器继续的提示词（正文已由 `handoff("推回去")` 记档）
 })
 
-# 三个集合的并集必须覆盖 `trace.KINDS`，有断言盯着。新加的 kind 必须在这一层表态（上屏 /
-# 有专门分支 / 只进日志），漏表态的后果是那一行静默消失。
+def declared_kinds() -> set[str]:
+    """展示层表过态的 kind —— 上面三个集合的并集。
+
+    新加的 kind 必须在这一层表态（上屏 / 有专门分支 / 只进日志），漏表态的后果是那一行
+    静默消失。测试拿这个函数断它覆盖 `trace.KINDS`。
+    """
+    return set(_ROLE_BY_KIND) | set(_SPECIAL_KINDS) | set(_LOG_ONLY_KINDS)
 
 #: 挂着的块：`[role, lines, ts]` —— 只用于把同一次 LLM 调用的 PROMPT/RESPONSE 归并成一块。
 _PENDING: list | None = None
