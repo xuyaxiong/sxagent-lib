@@ -52,7 +52,9 @@ class Session:
         self.log_fh: TextIO | None = None
 
 
-#: 默认会话 —— 只有上下文里没设时才取得到。
+#: 默认会话 —— 只有上下文里没设时才取得到。**它的生命周期就是进程的**：产物表、发号器、
+#: 日志句柄都跟着进程活，进程结束才没。拿它跑很多轮"逻辑上的会话"，产物就会一直涨 ——
+#: 多会话的宿主必须每会话开一个（`session()`），那是库对外的 API。
 _DEFAULT = Session(thread_id="")
 
 _current: ContextVar[Session | None] = ContextVar("sxagent_session", default=None)
