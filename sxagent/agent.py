@@ -218,7 +218,6 @@ async def try_answer_then_rerun(
     answer = await _ask_main(messages, skill.name, rec.get("task") or "", outcome)
     if not answer:
         return outcome, ""
-    rec["agent_tried"] = True
     # 成对记：只记答案的话，下次重入时 `report` 已被新问题覆盖，这条答案就没了指涉。
     # 「问」取 `outcome.asked`（`ask_user` 的原话）而不是 `report`（混着过场的那段话）。
     rec["qa"] = [*(rec.get("qa") or []),
@@ -331,7 +330,7 @@ def _new_task(skill_name: str, task: str, tid: str, refs: list[str],
     """
     return {
         "id": tid, "skill": skill_name, "task": task,
-        "stage": "running", "artifacts": [], "report": "", "agent_tried": False,
+        "stage": "running", "artifacts": [], "report": "",
         # 它申报要的那条信息（`ask_user` 的原话），每次 `settle` 覆盖写
         "asked": "",
         # 平台故障的原因（空 = 没故障）与它的类（`FaultKind`），同样覆盖写

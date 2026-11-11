@@ -152,7 +152,8 @@ def _dump(result: dict) -> None:
             f"   │ {t['id']} skill={t['skill']:<16} stage={t['stage']:<14} "
             f"产物={t['artifacts'] or '（无）'}"
         )
-        if t.get("agent_tried"):
+        # "试答过没有"从 `qa` 推：`by=主 agent` 的那些就是它补的
+        if any(x.get("by") == "主 agent" for x in (t.get("qa") or [])):
             print(f"   │     主 agent 试答过；执行器说={t['report']!r}")
     ctx = _ctx_chars(result.get("messages") or [])
     body = artifacts_mod.chars()

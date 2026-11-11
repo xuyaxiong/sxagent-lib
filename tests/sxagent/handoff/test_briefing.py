@@ -22,7 +22,6 @@ EXCLUDED: dict[str, str] = {
     "asked": "它要的那句走回执；交接书里走 `qa` 的「问」",
     "fault": "平台故障是平台侧的事，执行器重入时用不上",
     "fault_kind": "同上",
-    "agent_tried": "平台侧的账（试答过没有），只有调试读数用它",
     "run_by": "台账据此说清全文在哪（`ledger._SRC`），交接书里不渲染",
 }
 
@@ -40,7 +39,6 @@ SENTINEL: dict[str, object] = {
     "fault_kind": "transient",
     "qa": [{"by": "用户", "q": "SENTINEL-QA-Q", "a": "SENTINEL-QA-A"}],
     "user_turns": [{"n": 1, "text": "SENTINEL-TURN", "after": "SENTINEL-AFTER"}],
-    "agent_tried": True,
     "run_by": "delegate",
 }
 

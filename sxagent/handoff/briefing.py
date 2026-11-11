@@ -80,7 +80,6 @@ class Task(TypedDict, total=False):
     fault_kind: FaultKind
     qa: list[QA]
     user_turns: list[Turn]  # 派发那一刻的快照
-    agent_tried: bool  # 平台强制试答过没有
     #: 这个 Task 最近一次运行是谁起的 —— `"delegate"`（主 agent 派发）或
     #: `"feed"`（用户答复后平台投递重跑）。台账截断时要说清"全文在哪"，而两条路的答案
     #: 不一样（投递那条路没有回执）—— 指错会让主 agent 翻到上一轮的回执。
