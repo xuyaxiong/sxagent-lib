@@ -8,7 +8,7 @@
 
 1. 不反解析。回执对象随 `ToolMessage.additional_kwargs` 走，记录层读对象；`_StopWhenPending`
    读 `handoff.kind`，不读文本、不猜语义。
-2. 交接原样搬。用户原话由平台搬（`_user_turns`），执行器要什么取 `ask_user` 的原话
+2. 交接原样搬。用户原话由平台搬（`build_user_turns`），执行器要什么取 `ask_user` 的原话
    （`asked`）——转述既会丢，也会加。
 3. 状态迁移只有一处入口：`dispatch` 里的 `settle()`。手写 `rec.update(stage=…)` 是无条件
    覆盖，会把"这一轮没产出就不抹掉上一轮产物"当场抵消。
@@ -307,7 +307,7 @@ def _supersede_old(runtime: ToolRuntime, skill_name: str) -> list[Task]:
 # ──────────────────────────── 用户原话（平台硬搬） ────────────────────────────
 
 
-def _user_turns(messages: list[BaseMessage]) -> list[dict[str, object]]:
+def build_user_turns(messages: list[BaseMessage]) -> list[dict[str, object]]:
     """把对话历史里的用户原话抽出来，按顺序编号，平台硬搬不经转述。
 
     只认 `HumanMessage`：主图里注入的台账是 `SystemMessage`、透传是 `AIMessage`，所以
@@ -494,7 +494,7 @@ async def delegate(
         return _reject(runtime, "rejected_artifact", f"❌ 产物 {'、'.join(unknown)} 不存在", have)
 
     # ② 立案 —— 这次委派记成一条 Task。用户原话平台硬搬（快照进 Task），全文按需取。
-    turns = _user_turns(runtime.state.get("messages") or [])
+    turns = build_user_turns(runtime.state.get("messages") or [])
     # id 用 tool_call_id 派生：并行调用时不会撞车。必须取尾部：前几位所有调用都一样。
     tid = f"t{(runtime.tool_call_id or 'x')[-8:]}"
     # 同 skill 下还没了结的旧 Task → 标记 superseded，免得台账里挂着过期项
