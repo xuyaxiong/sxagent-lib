@@ -1,49 +1,20 @@
-"""**产物库** —— 运行期的交付物（"文件系统"的替身，**上下文隔离的落点**）。
+"""产物库：运行期的交付物。它是文件系统的替身，也是上下文隔离的落点。
 
-产物正文写进来，只把 **ID** 交回主 agent；正文要读得显式 `read_artifact`。
-执行器产出的东西因此**不会自动流进主 agent 的上下文** —— 这是整个架构的核心收益。
+正文写进库里，只把 ID 交回主 agent，要读正文得显式调 `read_artifact`，所以执行器做出来的
+东西不会自己流进主上下文。一条产物记 `title` / `summary` / `content` / `type` / `ext` /
+`file`，落盘后补 `path`。
 
-**产物记录**：`title` / `summary` / `content` / `type`（**产出方声明的**文件类型）/
-`ext` / `file`（+ 落盘后的 `path`）。类型走**硬性派发**（一张表），不嗅探内容。
+## 不变量
 
-## 这个文件是什么
-
-产物这一层的**唯一持有者**：那张表只住在这里，对外**只有函数**
-（`get` / `has` / `ids` / `items` / `count` / `chars` / `clear` / `store_artifact` /
-`use_dir`），加上三个 LLM 工具（`write_artifact` / `read_artifact` / `list_artifacts`）。
-**换实现（表 / 按会话分库 / 真存储）只动这个文件。**
-
-## 设计原则（不变量）
-
-1. **对外只有函数，不给 dict**（同 `sxagent/registry.py` 的铁律）—— 调用方只认这几个函数，
-   表本身私有。
-   ⚠️ **导入本模块**（`from sxagent import artifacts`），别 `from sxagent.artifacts import get`
-   —— 这些名字太通用，裸导入迟早撞名。
-2. **类型走硬性派发，不嗅探内容**（`FILE_TYPES` 一张表）：说 md 就存 `.md`、说 html 就存
-   `.html` —— 类型是**产出方声明的**（`write_artifact` 的 `file_type`）。
-   声明缺失 / 认不出来存 `DEFAULT_EXT`，**不报错**：产物已经产出来了，存不下比存错更糟。
-3. **落盘 = 库里那份，一字不加** —— 正文就是正文，平台不必加料；"这是哪一份"由
-   **文件名**（`art_001_<标题>.md`）承载。
-4. **ID 用发号器**（`itertools.count()`），不用 `len(表) + 1` —— 后者是"先查后写"，
-   两步之间有窗口，产物会**静默丢失**。
-5. **落盘目录走 `use_dir()`，不直接赋值那个字段** —— 写错模块要**当场
-   `AttributeError`**，不能挂在一个没人读的属性上。
-6. **三样状态都在会话上**（表 / 发号器 / 落盘目录，`session.current()`）——
-   **不是模块级**。多会话共享进程时各写各的：用户 B 的 `list_artifacts`
-   看不见用户 A 的产物。
-7. **`write_artifact` 按 run 记账**（`make_write_artifact` 的闭包 ＋ `created`）——
-   **谁写的谁自己记**，不靠事后扫消息文本猜。
-8. **工具返回的头不用 `【…】`** —— 那是**段名的专用符号**（记录层靠"独占行首"做确定性
-   切分）；它只是**工具返回的头**，标题用粗体。
-
-## 关键取舍
-
-**当场落盘**（`store_artifact` 顺手写文件）：产物是**交付物**，用户当场就要能打开 ——
-`write_artifact` 那句"已写入产物 art_001"必须**指得到文件**。
-
-**清单带落盘路径，且放在"按需"那一层**（`artifact_index_lines`）—— 台账是**每轮注入**的
-索引、必须短；这里是真调 `list_artifacts` 才付成本。
-"""
+1. 对外只给函数，不给 dict（同 `registry`）。表私有，换实现只动这个文件。
+2. 类型靠硬派发，不嗅探内容。认不出来存 `DEFAULT_EXT`，不报错：产物已经做出来了，存不下比
+   存错更糟。
+3. 落盘那份和库里那份一字不差，"这是哪一份"由文件名承载（`art_001_<标题>.md`）。
+4. ID 用 `itertools.count()` 发，不用 `len(表) + 1`：后者先查后写，中间有窗口，产物会静默丢。
+5. 落盘目录只能走 `use_dir()`，直接赋值写错模块不会当场炸。
+6. 表、发号器、落盘目录三样都挂会话上，不挂模块级。`write_artifact` 按 run 记账靠闭包
+   `created`，不靠事后扫消息文本猜。
+7. 工具返回的标题不用 `【…】`：那是段名的专用符号，记录层靠"独占行首"切分。"""
 
 from __future__ import annotations
 
@@ -57,9 +28,7 @@ from sxagent import session, trace
 
 # ──────────────────────────── 产物类型（声明 + 硬性派发） ────────────────────────────
 
-#: **声明的文件类型 → 扩展名** —— 平台据此**硬性派发**保存：说 md 就存 `.md`，
-#: 说 html 就存 `.html`。**不嗅探内容** —— 类型是**产出方在交付时说的**。
-#:
+#: 声明的文件类型 → 扩展名 —— 平台据此硬性派发保存。不嗅探内容：类型是产出方在交付时说的。
 #: 要支持新类型就往这张表里加一行 —— 派发规则只有这一处。
 FILE_TYPES: dict[str, str] = {
     "md": ".md",
@@ -67,7 +36,7 @@ FILE_TYPES: dict[str, str] = {
     "html": ".html",
     "htm": ".html",
 }
-#: 声明缺失 / 认不出来时存成什么。**不报错**：产物已经产出来了，存不下比存错更糟。
+#: 声明缺失 / 认不出来时存成什么。不报错：产物已经产出来了，存不下比存错更糟。
 DEFAULT_EXT = ".md"
 
 
@@ -83,16 +52,12 @@ def artifact_slug(s: str, n: int = 40) -> str:
 
 # ──────────────────────────── 产物库（= 文件系统替身） ────────────────────────────
 #
-# 🔴 **对外只有函数，不给 dict**（模块头原则 1）：**换实现只动这个文件**，
-#    调用方只认下面这几个函数。
-#
-# ⚠️ **导入本模块**（`from sxagent import artifacts`），别 `from sxagent.artifacts import get`
-#    —— 这些名字太通用，裸导入迟早撞名。
+# 对外只有函数、不给 dict：换实现只动这个文件，调用方只认下面这几个函数。
 
 def get(aid: str) -> dict[str, str] | None:
-    """按 ID 取**产物记录**（含正文）；没有就 None。
+    """按 ID 取产物记录（含正文）；没有就 None。
 
-    ⚠️ 返回的是**记录本身**（不复制）—— 读没问题；写请走 `store_artifact`。
+    返回的是记录本身（不复制）—— 读没问题；写请走 `store_artifact`。
     """
     return session.current().artifacts.get(aid)
 
@@ -108,7 +73,7 @@ def ids() -> list[str]:
 
 
 def items() -> list[tuple[str, dict[str, str]]]:
-    """（ID, 记录）的**快照** —— 遍历用，加进来的新产物不会中途冒出来。"""
+    """（ID, 记录）的快照 —— 遍历用，加进来的新产物不会中途冒出来。"""
     return list(session.current().artifacts.items())
 
 
@@ -117,7 +82,7 @@ def count() -> int:
 
 
 def chars() -> int:
-    """产物库正文合计字数 —— **隔离效果的读数之一**（`snapshot` / `__main__` 用它）。"""
+    """产物库正文合计字数 —— 隔离效果的读数之一（`snapshot` / `__main__` 用它）。"""
     return sum(len(a["content"]) for a in session.current().artifacts.values())
 
 
@@ -125,30 +90,25 @@ def clear() -> None:
     """清空 —— 跑批每个 case 开始前调它（`harness.install`）。"""
     session.current().artifacts.clear()
 
-# ⚠️ 产物 ID 的**发号器**已搬进 `Session.artifact_seq`（每个会话一条序列）——
-#    为什么必须走 `itertools.count()` 而不是 `len(表) + 1`（"先查后写"有窗口，
-#    两个执行器会拿到同一个 ID、产物**静默丢失**），见 `session.Session.artifact_seq` 的注释。
-#    ⚠️ 它现在**按会话**发号，不再是全进程一条序列。
+# 产物 ID 走 `Session.artifact_seq` 的发号器。用 `len(表) + 1` 有窗口：两个执行器会拿到
+# 同一个 ID，产物静默丢失。
 
 
 def use_dir(path: Path | None) -> None:
-    """告诉产物库"**这个会话**的产物放哪"。**入口调这个，不要直接赋值那个字段。**
+    """告诉产物库"这个会话"的产物放哪。入口调这个，不要直接赋值那个字段。
 
-    🔴 **为什么要有这个函数**（模块头原则 5）：走函数，**写错模块会当场 `AttributeError`**
-    （启动就炸，不用等人发现）。⚠️ 它设的是**当前会话**的目录 ——
-    多会话共享进程时，各写各的，不互相覆盖。
+    走函数，写错模块会当场 `AttributeError`（启动就炸，不用等人发现）。它设的是当前会话
+    的目录 —— 多会话共享进程时各写各的，不互相覆盖。
     """
     session.current().artifact_dir = path
 
 
 def store_artifact(title: str, summary: str, file_type: str, content: str) -> str:
-    """把产物落进产物库，返回产物 ID。**顺手落盘**（设了落盘目录的话）。
+    """把产物落进产物库，返回产物 ID。顺手落盘（设了落盘目录的话）。
 
-    🔴 **为什么当场落盘**（模块头「关键取舍」）：产物是**交付物**，用户当场就要能打开 ——
-    `write_artifact` 那句"已写入产物 art_001"必须**指得到文件**。
-
-    记录里带 `type`（声明的类型）/ `ext`（扩展名）/ `path`（真实路径）——
-    **产物不只是正文**，后面还要有代码按类型处理它（md 归 md、html 归 html）。
+    当场落盘：产物是交付物，用户当场就要能打开 —— "已写入产物 art_001"必须指得到文件。
+    记录里带 `type`（声明的类型）/ `ext`（扩展名）/ `path`（真实路径）—— 产物不只是正文，
+    后面还要有代码按类型处理它。
     """
     aid = f"art_{next(session.current().artifact_seq):03d}"
     ext = file_ext(file_type)
@@ -164,15 +124,13 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
     if _dir is not None:
         _dir.mkdir(parents=True, exist_ok=True)
         p = _dir / rec["file"]
-        # 🔴 **落盘 = 库里那份，一字不加**（模块头原则 3）：正文就是正文，平台不必加料；
-        #    "这是哪一份"由**文件名**承载，正文里不需要再来一遍。
+        # 落盘 = 库里那份，一字不加：正文就是正文，"这是哪一份"由文件名承载。
         p.write_text(rec["content"], encoding="utf-8")
         rec["path"] = str(p)
     session.current().artifacts[aid] = rec
-    # 🔴 **落盘那一刻说一声**。写产物是**全程最长的一段静默**（实测一个 HTML
-    #    产物要 5–9 分钟）—— "开始"和"进度"由传输层报（`stream._stream_agent`，它只认
-    #    "某个工具的参数在流"），**"结束"必须由这里报**：只有本模块认识"产物"这个概念。
-    #    ⚠️ 报的是**结构事实**（ID / 标题 / 字数 / 路径），不是从正文里读的。
+    # 落盘那一刻说一声。写产物是全程最长的一段静默："开始"和"进度"由传输层报，
+    # "结束"必须由这里报 —— 只有本模块认识"产物"这个概念。
+    # 报的是结构事实（ID / 标题 / 字数 / 路径），不是从正文里读的。
     trace.note(
         f"✅ 产物落盘 · {aid}《{title}》（{len(content)} 字）"
         + (f" → {rec['path']}" if rec.get("path") else "（本次只进内存，没落盘）"),
@@ -182,13 +140,11 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
 
 
 def make_write_artifact(created: list[str] | None = None):
-    """造一个 `write_artifact` 工具。`created` 非空时，**顺手把产物 ID 记进去**。
+    """造一个 `write_artifact` 工具。`created` 非空时，顺手把产物 ID 记进去。
 
-    🔴 **为什么要"造"而不是共用一个**（模块头原则 7）：执行器要回答"**这次 run 写了哪些
-    产物**"（`outcome.artifacts`）—— 改成**记账**：谁写的，谁自己记。
-
-    ⚠️ **用闭包，不用模块级全局**：并行 delegate 时两个执行器会互相覆盖 ——
-    闭包 ＝ **按 run 归属**，并发窗口**结构上不存在**。
+    要"造"而不是共用一个：执行器要回答"这次 run 写了哪些产物"（`outcome.artifacts`）——
+    改成记账，谁写的谁自己记。用闭包、不用模块级全局：并行 delegate 时两个执行器会互相
+    覆盖 —— 闭包 = 按 run 归属，并发窗口结构上不存在。
     """
 
     @tool
@@ -207,7 +163,7 @@ def make_write_artifact(created: list[str] | None = None):
         if created is not None:
             created.append(aid)
         a = session.current().artifacts[aid]
-        # 返回里**带上文件类型和保存地址** —— 用户和后面的代码都要靠它找到这份产物
+        # 返回里带上文件类型和保存地址 —— 用户和后面的代码都要靠它找到这份产物
         where = f"\n文件：{a['path']}" if a.get("path") else ""
         return f"已写入产物 {aid}（{len(content)} 字，{a['ext'].lstrip('.')}）{where}"
 
@@ -226,21 +182,17 @@ async def read_artifact(artifact_id: str) -> str:
     只是把它交给下一个任务，用 `delegate(..., artifacts=[...])` 传 ID 就够了。
     """
     a = get(artifact_id)
-    # ⚠️ **不用 `【…】`**（段名专用符号，见模块头原则 8）—— 它是**工具返回的头**，不是段名。
+    # 不用 `【…】`（段名专用符号）—— 它是工具返回的头，不是段名。
     return f"**{a['title']}**\n\n{a['content']}" if a else f"产物 {artifact_id} 不存在"
 
 
 def artifact_index_lines() -> list[str]:
-    """产物清单（渐进式披露第一层）：ID / 名称 / 字数 / **类型** / 梗概 / **落盘路径**，
-    **不含正文**。
+    """产物清单（渐进式披露第一层）：ID / 名称 / 字数 / 类型 / 梗概 / 落盘路径，不含正文。
 
-    🔴 **路径必须在这一层**（模块头「关键取舍」）：主 agent 要答"文件在哪"，而它在
-    **投递重跑**（`feed`）那条路上**没有回执**（回执只属于 `delegate` 工具调用，
-    见 `briefing.Task.run_by`），台账的完成行又只有 ID。
-
-    ⚠️ 放在**这一层**而不是台账：台账是每轮注入的索引，必须短；这里是**按需**的
-    （只有真调 `list_artifacts` 才付成本），和回执【产出的产物】是**同一个形状**
-    （ID ＋ 梗概一行，路径另起一行缩进 2 格）。
+    路径必须在这一层：主 agent 要答"文件在哪"，而它在投递重跑（`feed`）那条路上没有回执
+    （回执只属于 `delegate` 工具调用），台账的完成行又只有 ID。
+    放在这一层而不是台账：台账是每轮注入的索引、必须短，这里是按需的；形状和回执
+    【产出的产物】一致（ID ＋ 梗概一行，路径另起一行缩进 2 格）。
     """
     return [
         f"- {aid}《{a['title']}》（{len(a['content'])} 字，{a.get('ext', '.md').lstrip('.')}）"

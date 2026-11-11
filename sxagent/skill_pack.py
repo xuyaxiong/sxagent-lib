@@ -1,52 +1,26 @@
-"""**技能包** —— 文件夹形态的技能，以及它的参考文件（I/O + 格式）。
-
-一个技能 = 一个文件夹：
+"""技能包：文件夹形态的技能和它带的参考文件，管磁盘 IO 与格式。
 
     my-skill/
-    ├── SKILL.md               ← 入口，**只有这一个名字**；frontmatter 给 name/description，正文即 instructions
-    ├── references/            ← **可选**，没有就没有（不是错误）
-    │   ├── 写作规范.md
-    │   └── 结构模板.md
-    └── assets/                ← 目录名随作者，**整个包都能读**
-        └── 汇总模板.md
+    ├── SKILL.md      ← 入口，只有这一个名字；frontmatter 给 name/description，正文即 instructions
+    ├── references/   ← 可选，没有也行
+    └── assets/       ← 目录名随作者，整个包都能读
 
-## 这个文件是什么
+加载包（`load_skill_pack` / `load_skills_dir`）、列和读包内文件（`list_skill_files` /
+`load_skill_file`）、两个给 LLM 的读工具（`read_skill` / `read_skill_file`）、任务书用的提示块
+（`skill_file_prompt`）都在这里。`registry` 管"技能是什么"，这里管"包在哪、里面有什么"。
 
-技能包这一层的**磁盘 I/O ＋ 两个 LLM 读工具**：加载包（`load_skill_pack` /
-`load_skills_dir`）、列与读包内文件（`list_skill_files` / `load_skill_file`）、
-`read_skill` / `read_skill_file`，以及任务书用的提示块 `skill_file_prompt`。
-`sxagent.registry` 管"技能是什么"，这里管"技能包在哪、里面有什么"。
+## 不变量
 
-## 设计原则（不变量）
-
-1. **技能包里的文件不进 `Skill` 对象** —— 它本来就在磁盘上读得到，装进对象里是
-   **多余的一份**。`PACK_DIRS` 只记**位置**（不是内容）。
-2. **读不读、什么时候读、读哪一份，是 LLM 自己的决策** —— 这里只提供两件事：
-   `list_skill_files()`（有哪些）和 `read_skill_file()`（读一份）。两者**都现场扫盘**，
-   内存里不留副本。
-3. **只认 `SKILL.md`** —— 入口文件名**只有一种**。不做"跟目录同名"的兼容：
-   两种写法并存会让"这个目录到底是不是一个技能包"变得要靠猜。
-4. **不限定子目录名** —— 作者的资料放 `references/` 还是 `assets/` 还是别的，
-   **是作者的事**；规定"参考资料必须叫 references"就是用目录名约束作者。
-5. **收与不收**：**收**扩展名在白名单里的文本文件（`TEXT_EXTS`），含子目录（名字带相对路径）；
-   **不收**二进制、超大文件、隐藏目录 —— **在"列"这一步就过滤掉**，所以 LLM 的清单里
-   根本不会出现读不了的东西。
-6. 🔑 **`read_skill_file` 只认 `list_skill_files` 给得出来的东西** —— 路径穿越（`../`）、
-   二进制、超大文件全被这一条挡住，**不需要再写一套路径检查**。
-7. **清单必须带 `skill_name`** —— `read_skill_file(skill_name, path)` 的**第一个参数是技能名**，
-   不写，执行器就只能**猜**。
-8. **提示块只有一份**（`skill_file_prompt`）—— `read_skill` 的工具返回与
-   `executor.run_task` 的任务书都调它；两处各拼一遍就是两副面孔。
-9. **两个 LLM 读工具住这里**（`read_skill` / `read_skill_file`）：它们同时要"领域对象"
-   （`registry`）和"磁盘 I/O"（本模块），住 `skills.py` 就得函数内 lazy import 本模块。
-10. **工具返回的头不用 `【…】`** —— 那是**段名的专用符号**（记录层靠它做确定性切分）；
-    它只是**工具返回的头**。
-
-## 关键取舍
-
-**只存"位置"，不存"内容"**：`PACK_DIRS` 记包目录，清单与正文**每次现场扫盘** ——
-代价是多一次遍历，换来内存里没有第二份副本（也就没有"副本过期"那一族状态）。
-"""
+1. 包里的文件不进 `Skill` 对象：磁盘上读得到，装进对象是多余的一份。`PACK_DIRS` 只记位置，
+   清单与正文每次现场扫盘。
+2. 读不读、读哪份是 LLM 的决定，这里只提供"有哪些"和"读一份"。
+3. 只认 `SKILL.md`，不做"跟目录同名"的兼容：两种写法并存就得靠猜。子目录名不限定。
+4. 收白名单扩展名的文本文件（`TEXT_EXTS`），不收二进制、超大文件、隐藏目录，在"列"这一步
+   就过滤掉。
+5. `read_skill_file` 只认 `list_skill_files` 报得出来的东西：路径穿越、二进制、超大文件全被
+   这一条挡住，不需要第二套路径检查。
+6. 清单必须带 `skill_name`：`read_skill_file` 的第一个参数是技能名。
+7. 提示块只有一份（`skill_file_prompt`）：两个调用方都调它，别各拼一遍。"""
 
 from __future__ import annotations
 
@@ -58,32 +32,28 @@ from langchain.tools import tool
 from sxagent.registry import registry
 from sxagent.skills import Skill
 
-#: 技能包的入口文件名 —— **只有这一个**。
+#: 技能包的入口文件名 —— 只有这一个。
 ENTRY_NAME = "SKILL.md"
 
-#: 收哪些扩展名当参考文件（小写、含点）。**要加就加这里。**
+#: 收哪些扩展名当参考文件（小写、含点）。要加就加这里。
 TEXT_EXTS: frozenset[str] = frozenset(
     {".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".tsv",
      ".html", ".xml", ".toml", ".ini", ".sql", ".log", ".py", ".js", ".ts"}
 )
 
-#: 单个参考文件的大小上限（字节）。超了就**不列出来** ——
-#: 参考文件是给 LLM 读的，几 MB 的那种多半是放错了地方，不是我们该默默吞下的。
+#: 单个参考文件的大小上限（字节）。超了不列 —— 参考文件是给模型读的，几 MB 的多半放错了地方。
 MAX_REF_BYTES = 256 * 1024
 
-#: 技能名 → 它的**包目录**。加载时记下，读参考文件时按它去找。
-#:
-#: ⚠️ 这里存的是**位置**，不是内容 —— 参考文件始终留在磁盘上，读的时候才取。
-#: 所以它不是 `Skill` 的字段（`Skill` 只管"这个技能是什么"，不管"它在哪个盘上"）。
+#: 技能名 → 它的包目录，加载时记下，读参考文件时按它去找。
+#: 存的是位置不是内容，所以不是 `Skill` 的字段。
 PACK_DIRS: dict[str, Path] = {}
 
 
 def split_frontmatter(text: str) -> tuple[dict, str]:
-    """拆 `---` 包裹的 YAML frontmatter 与正文；没有 frontmatter 时元数据为空。
+    """拆 `---` 包裹的 frontmatter 与正文；没有就元数据为空。
 
-    🔴 **结束标记必须是"独占一行"的 `---`** —— 不能简单 `text.split("---")`：
-    **值里可以带 `---`**（真实技能就有），naive split 会在引号中间断开、
-    YAML 直接解析失败。**按行找分隔符**才稳。
+    结束标记必须是独占一行的 `---`，不能 `text.split("---")`：值里可以带 `---`（真实
+    技能就有），naive split 会在引号中间断开，YAML 直接解析失败。
     """
     s = text.lstrip("﻿").lstrip()  # BOM 也算 —— 有的编辑器会写进去
     lines = s.splitlines()
@@ -104,15 +74,10 @@ def split_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def list_skill_files(skill_name: str) -> list[tuple[str, int]]:
-    """技能包里的文本文件 → `[(相对包根的路径, 字数), ...]`。**现场扫盘，不缓存。**
+    """技能包里的文本文件 → `[(相对包根的路径, 字数), ...]`。现场扫盘，不缓存。
 
-    🔴 **不限定子目录名**（模块头原则 4）：作者爱放 `references/` 还是 `assets/`，
-    是**作者的事**。
-
-    **排除**：入口 `SKILL.md` 自己（它的正文已经是 `instructions` 了）、
-    隐藏目录（`.git` 之类）、非文本扩展名、超大文件。
-
-    没有技能包信息 / 目录里没东西 —— 一律返回**空列表**：**没有就是没有，不是错误**。
+    排除入口 `SKILL.md`、隐藏目录、非文本扩展名、超大文件。没有技能包信息或目录里没东西，
+    返回空列表：没有就是没有，不是错误。
     """
     pack = PACK_DIRS.get(skill_name)
     if pack is None:
@@ -126,30 +91,21 @@ def list_skill_files(skill_name: str) -> list[tuple[str, int]]:
             continue
         if p.suffix.lower() not in TEXT_EXTS or p.stat().st_size > MAX_REF_BYTES:
             continue
-        # 🔴 名字用**相对技能包根**的路径（`references/stage-1-topic.md`），
-        # **和 SKILL.md 里写的一模一样** —— 作者本来就是那么引用的。
+        # 名字用相对技能包根的路径，和 SKILL.md 里写的一模一样 —— 作者本来就是那么引用的。
         out.append((rel.as_posix(), len(p.read_text(encoding="utf-8", errors="replace"))))
     return out
 
 
 def skill_file_index_lines(skill_name: str) -> list[str]:
-    """技能包文件清单（渐进式披露第二层半）：路径 + 字数，**不含正文**。"""
+    """技能包文件清单（渐进式披露第二层半）：路径 + 字数，不含正文。"""
     return [f"- {name}（{n} 字）" for name, n in list_skill_files(skill_name)]
 
 
 def skill_file_prompt(skill_name: str) -> str:
-    """【技能自带文件】提示块（清单常驻、正文按需）—— **唯一一份**；没文件返回空串。
+    """【技能自带文件】提示块（清单常驻、正文按需），唯一一份；没文件返回空串。
 
-    🔴 **为什么抽成函数**（模块头原则 8）：这段提示原来在**两处各拼一遍、逐字重复**
-    （`read_skill` 的工具返回 / `executor.run_task` 的任务书）—— 改一处忘另一处，
-    同一个东西就是两副面孔。
-
-    🔴 **必须把 `skill_name` 写进清单**（模块头原则 7）—— 不写，执行器就只能**猜**。
-
-    ⚠️ **不用 `【…】`**（段名专用符号，见模块头原则 10）—— 它是【技能指令】**里面**的一段，
-    不是和它平级的段。
-
-    ⚠️ **有才带这一段** —— 没有就返回空串（**没有就是没有**，不写"（无参考文件）"这种废话）。
+    两个调用方（`read_skill` 的返回、`run_task` 的任务书）共用这一处。必须把 `skill_name`
+    写进清单，不写执行器就只能猜。有才带这一段，不写"（无参考文件）"。
     """
     files = skill_file_index_lines(skill_name)
     if not files:
@@ -162,10 +118,7 @@ def skill_file_prompt(skill_name: str) -> str:
 
 
 def load_skill_file(skill_name: str, path: str) -> str | None:
-    """读技能包里某个文件的全文；**不在清单里就返回 `None`**（模块头原则 6）。
-
-    `path` 是**相对技能包根**的路径（`references/xxx.md`），和清单给的一致。
-    """
+    """读技能包里某个文件的全文；不在清单里就返回 `None`。`path` 相对技能包根。"""
     if path not in {name for name, _ in list_skill_files(skill_name)}:
         return None
     return (PACK_DIRS[skill_name] / path).read_text(encoding="utf-8", errors="replace")
@@ -178,18 +131,15 @@ async def read_skill(skill_name: str) -> str:
     常驻在你眼前的只有技能名和一句话描述。写任务要求前若不确定这个技能
     **交付什么、按什么标准交付**，用它读原文核对 —— **不要凭描述猜**。
     """
-    # 🔴 **住在这里**（模块头原则 9）：它同时要用"领域对象"（`registry`）和"磁盘 I/O"
-    #    （本模块的文件清单）—— 住 `skills.py` 就得函数内 lazy import 本模块（一提就成环）。
-    #    ⚠️ 这里原来还有一条反向 import（`from sxagent.agent import SKILLS`）——
-    #    技能表收进 `sxagent/registry.py` 后那条没了。
+    # 住在这里：它同时要用领域对象（`registry`）和磁盘 I/O（本模块），住 `skills.py`
+    # 就得函数内 lazy import 本模块（一提就成环）。
     skill = registry.get(skill_name)
     if skill is None:
         return f"没有技能「{skill_name}」。可用：{'、'.join(registry.names())}"
-    # ⚠️ **不用 `【…】`**（段名专用符号，见模块头原则 10）—— 它是**工具返回的头**，不是段名。
+    # 不用 `【…】`（段名专用符号）—— 它是工具返回的头，不是段名。
     out = f"**技能「{skill.name}」** —— {skill.description}\n\n{skill.instructions}"
-    # 参考文件清单**现场扫盘**（不缓存在 Skill 上，见模块头原则 2）。
-    # 提示块是**唯一一份**（`skill_file_prompt` —— 任务书那边用的是同一个函数）；
-    # 没有自带文件时它返回空串（**一个字不加**）。
+    # 参考文件清单现场扫盘（不缓存在 Skill 上）；提示块是唯一一份（任务书那边用的是
+    # 同一个函数），没有自带文件时返回空串。
     out += skill_file_prompt(skill.name)
     return out
 
@@ -210,7 +160,7 @@ async def read_skill_file(skill_name: str, path: str) -> str:
     got = load_skill_file(skill_name, path)
     if got is None:
         return f"「{skill_name}」里没有文件「{path}」。现有：\n" + "\n".join(have)
-    # ⚠️ **不用 `【…】`**（段名专用符号，见模块头原则 10）—— 它是**工具返回的头**，不是段名。
+    # 不用 `【…】`（段名专用符号）—— 它是工具返回的头，不是段名。
     return f"**{skill_name} / {path}**\n\n{got}"
 
 
@@ -220,8 +170,8 @@ async def read_skill_file(skill_name: str, path: str) -> str:
 def load_skill_pack(pack_dir: Path) -> tuple[Skill | None, list[str]]:
     """读一个技能包目录 →（`Skill`，说明/警告）。
 
-    返回 `None` 表示"这个目录不是技能包"（没有 `SKILL.md`，或 frontmatter 没写 `name`）——
-    **不是错误**，调用方跳过即可。参考文件**不在这里读**，只记下包目录。
+    返回 `None` 表示"这个目录不是技能包"（没有 `SKILL.md` 或没写 `name`），不是错误。
+    参考文件不在这里读，只记下包目录。
     """
     entry = pack_dir / ENTRY_NAME
     if not entry.is_file():
@@ -242,10 +192,9 @@ def load_skill_pack(pack_dir: Path) -> tuple[Skill | None, list[str]]:
 
 
 def load_skills_dir(path: str | Path) -> tuple[dict[str, Skill], list[str]]:
-    """扫一个目录下的**所有技能包** →（`{name: Skill}`，说明/警告）。
+    """扫一个目录下的所有技能包 →（`{name: Skill}`，说明/警告）。
 
-    ⚠️ **只认子目录里的 `SKILL.md`**，目录下的散装 `*.md` 一律不看 ——
-    一个技能是一个包，散文件没有"包"的边界。
+    只认子目录里的 `SKILL.md`，散装 `*.md` 不看 —— 一个技能是一个包，散文件没有包的边界。
     """
     root = Path(path)
     skills: dict[str, Skill] = {}

@@ -1,40 +1,20 @@
-"""**内置技能入口**（**最简装配**）。
+"""内置技能入口，装配最简的那种。
 
     uv run python -m sxagent                # 交互式
     uv run python -m sxagent --say "你好"    # 单轮
 
-⚠️ **验证 CLI 入口是 `app/chat.py`**（打包打的就是它，见 `build_cli.py`）—— 这里是
-**只装内置技能、显示层最简**的那个入口，用来快速看机制。
+验证用的 CLI 是 `app/chat.py`，打包打的是它。这里只装内置技能、显示层最简，用来快速看机制。
+显示层订阅事件总线（`_on_event`）自己排版，日志落在 `recorder.LOG_FILE`。
 
-## 这个文件是什么
+## 不变量
 
-`python -m sxagent` 的**入口 ＋ 显示层**：跑一轮（`turn`）→ 印回合读数（`_dump`）→
-接着问下一句。显示层**订阅 `trace` 的事件总线**（`_on_event`），自己排版上屏；
-日志落在 `recorder.LOG_FILE`。
-
-## 设计原则（不变量）
-
-1. **显示层只认事件**：谁说的由**事件自己带着**（`role` / `kind`），**不读 `state`、
-   不从渲染文本反推** —— 同 `app/chat.py` 的契约（展示层不读记录层的产物）。
-2. **不建第二张 kind→角色 表**（那正是"两套"）：`chat._ROLE_BY_KIND` 是它的表态，
-   这里是**另一份**，加一个 kind 就要改两处 —— 漏一处就是**静默丢一条**。
-   所以这一层**按形状渲染**：认得的形状各给一行，
-   **认不出的一律照原样打出来**（fail-open —— 排版丑一点没关系，静默丢才要命）。
-3. **切了必须标**：块最多印 `_BLOCK_MAX_LINES` 行，超出要写明**还剩多少行、
-   全文在哪**（全文永远在日志文件里）。
-4. **炸一轮 ≠ 结束会话**：基础设施抖动按**轮**兜住 —— 说清原因，让调用方接着问下一句。
-5. **待答的标识由通道填，平台不猜**：`↩` 提示符**就是"通道"**，
-   在它下面打的字带 `answer_to` 投回去；**一次只摆一个**。
-6. **不替用户编答案**：`--say` 下没给 `--answer` 就把问题打出来停住。
-
-## 关键取舍
-
-**不抽公共渲染层**：`app/chat.py` 那份渲染在**验证 CLI 入口**上、被守卫钉着 ——
-为一个裸入口去动它是反向的。这一层只求"能看机制"。
-
-**读数从回合末的快照取**（Task 表 / 上下文体积）：那些是**事件里没有的东西**（`_dump`），
-只能从 `graph.invoke` 的返回值读。
-"""
+1. 显示层只认事件：谁说的由 `role` / `kind` 带着，不读 `state`，不从渲染文本反推。
+2. 不建第二张 kind 到角色的表（那是 `chat._ROLE_BY_KIND` 的表态）。这一层按形状渲染：认得的
+   形状各给一行，认不出的一律照原样打出来——排版丑一点没关系，静默丢才要命。
+3. 切了必须标：块最多印 `_BLOCK_MAX_LINES` 行，超出写明还剩多少行、全文在哪。
+4. 炸一轮不等于结束会话：按轮兜住，说清原因让调用方接着问下一句。
+5. 待答的标识由通道填：答复提示符就是"通道"，在它下面打的字带 `answer_to` 投回去，一次摆
+   一个。`--say` 下没给 `--answer` 就把问题打出来停住，不替用户编答案。"""
 
 from __future__ import annotations
 
@@ -56,13 +36,13 @@ from sxagent import artifacts as artifacts_mod
 
 BAR = "─" * 74
 
-#: 块最多印几行（**切了必须标**；全文永远在日志文件里）
+#: 块最多印几行（切了必须标；全文永远在日志文件里）
 _BLOCK_MAX_LINES = 12
 
 
 # ──────────────────────────── 显示层：事件 → 屏幕 ────────────────────────────
 
-#: 说话的是谁 —— 按 `role` **枚举**取（逻辑），不从 `who` 的措辞里猜。
+#: 说话的是谁 —— 按 `role` 枚举取（逻辑），不从 `who` 的措辞里猜。
 _ROLE_TAG = {trace.AGENT: "🤖 主 agent", trace.EXECUTOR: "🔧 执行器"}
 
 _last_stream_tag = ""      # 同一角色连着吐字时，前缀只打一次
@@ -70,10 +50,10 @@ _tool_names: dict[tuple[str, str], str] = {}   # (role, tool_call_id) → 工具
 
 
 def _bullets(v: object) -> str:
-    """列表 → 逐项 `- x`；字符串原样。**空的显式写「（无）」**（"没有"也要能审计）。
+    """列表 → 逐项 `- x`；字符串原样。空的显式写「（无）」（"没有"也要能审计）。
 
-    ⚠️ 这里**不截断** —— 四格是一次判断的**凭据**，看全才有意义（"判断必须可审计"）。
-    长的是 `given`/`result` 里的自由文本，那是它本来该有的样子。
+    这里不截断 —— 四格是一次判断的凭据，看全才有意义。长的是 `given`/`result` 里的自由
+    文本，那是它本来该有的样子。
     """
     if isinstance(v, (list, tuple)):
         return "\n".join(f"- {x}" for x in v) if v else "（无）"
@@ -81,7 +61,7 @@ def _bullets(v: object) -> str:
 
 
 def _capped(text: str) -> str:
-    """多行文本**截行**并**显式说明**（切了必须标，绝不静默截）。"""
+    """多行文本截行并显式说明（切了必须标，绝不静默截）。"""
     lines = str(text).splitlines() or [""]
     if len(lines) <= _BLOCK_MAX_LINES:
         return "\n".join(lines)
@@ -90,7 +70,7 @@ def _capped(text: str) -> str:
 
 
 def _on_event(ev: dict) -> None:
-    """事件总线的订阅入口 —— 展示层从这里拿**结构化**事实，自己排版上屏。"""
+    """事件总线的订阅入口 —— 展示层从这里拿结构化事实，自己排版上屏。"""
     global _last_stream_tag
     t = ev.get("type")
     if t != "stream":
@@ -106,9 +86,8 @@ def _on_event(ev: dict) -> None:
         print(f"\n{'═' * 3} {ev['title']}")
     elif t == "note":
         if ev.get("kind") == "relay":
-            # 🔴 **平台透传**：这句是**执行器的原话**，平台只是转达 —— 归属由 kind 给，
-            #    不读文本、不读标记。原文照上屏 —— **不切前缀**：
-            #    日志文件那个 `finalize: ` 是记录层的格式，切它就会随文案漂。
+            # 平台透传：这句是执行器的原话，平台只是转达 —— 归属由 kind 给，不读文本。
+            # 原文照上屏、不切前缀：日志文件那个 `finalize: ` 是记录层的格式，切它会随文案漂。
             print(f"\n📮 平台 → 用户：{ev['text']}")
         else:
             print(f"   │ {ev['text']}")
@@ -117,7 +96,7 @@ def _on_event(ev: dict) -> None:
         for ln in _capped(ev["text"]).splitlines():
             print(f"   │   {ln}")
     elif t == "decision":
-        # 四格从**对象**渲染（前提 / 问题 / 结果 / 下一步）—— 不从渲染文本反推
+        # 四格从对象渲染（前提 / 问题 / 结果 / 下一步）—— 不从渲染文本反推
         print(f"   │ 🧭 {ev['who']}｜问题：{ev['q']}")
         print(f"   │   前提：{_bullets(ev['given'])}")
         print(f"   │   结果：{_bullets(ev['result'])}")
@@ -127,12 +106,12 @@ def _on_event(ev: dict) -> None:
               + (f"｜{ev['see']}" if ev.get("see") else ""))
     elif t == "dump":
         _on_dump(ev)
-    # `handoff`（交接记录）只进日志文件，不上屏 —— 同 `app/chat.py` 的契约：
-    # 它的内容上面那些形状已经各自播过一遍，这里再播就是同一个事实两副面孔。
+    # `handoff`（交接记录）只进日志文件、不上屏 —— 同 `chat.py` 的契约：它的内容上面那些
+    # 形状已经各自播过一遍，这里再播就是同一个事实两副面孔。
 
 
 def _on_dump(ev: dict) -> None:
-    """消息轨迹 —— **消息对象本身就在事件里**，归属按 `ev["role"]` 取。"""
+    """消息轨迹 —— 消息对象本身就在事件里，归属按 `ev["role"]` 取。"""
     role = ev.get("role") or ""
     who = _ROLE_TAG.get(role, f"· {role or '未知角色'}")
     for m in ev.get("messages") or []:
@@ -148,7 +127,7 @@ def _on_dump(ev: dict) -> None:
             name = _tool_names.get((role, str(getattr(m, "tool_call_id", "") or "")), "?")
             print(f"   │ ↩ {name} 的返回（{len(content)} 字）：\n{_capped(content)}")
         elif kind == "SystemMessage":
-            # 平台每轮注入的台账 —— **不截断**（它是"平台塞了什么"的观察窗口）
+            # 平台每轮注入的台账 —— 不截断（它是"平台塞了什么"的观察窗口）
             print(f"   │ 📌 平台 → 主 agent（注入的台账）：\n{content}")
 
 
@@ -165,7 +144,7 @@ def _ctx_chars(messages: list) -> int:
 
 
 def _dump(result: dict) -> None:
-    """回合末的**读数**（Task 表 ＋ 上下文体积）—— 事件里没有的东西，从快照读。"""
+    """回合末的读数（Task 表 ＋ 上下文体积）—— 事件里没有的东西，从快照读。"""
     tasks = result.get("tasks") or []
     print(f"   │ ── Task（只记委派出去的工作，共 {len(tasks)} 个）──")
     for t in tasks:
@@ -193,20 +172,18 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _turn(graph, config, text: str, *, answer_to: str = "") -> dict | None:
-    """跑**一轮** —— 炸了就按**轮**兜住、说清原因、返回 `None`（会话不死）。
+    """跑一轮 —— 炸了就按轮兜住、说清原因、返回 `None`（会话不死）。
 
-    `answer_to`：**这条消息是在回答哪个待答任务** —— 由**通道**填
-    （下面那个 `↩` 提示符），平台不猜（模块头原则 5）。
+    `answer_to`：这条消息是在回答哪个待答任务 —— 由通道填（下面那个答复提示符），
+    平台不猜。
     """
     init: dict = {"messages": [HumanMessage(text)], "log": []}
     if answer_to:
         init["answer_to"] = answer_to
     try:
-        # 🔴 **异步驱动**：LangGraph 会把同步节点丢进线程跑 —— 行为一个字不变，
-        #    但**解开了"有 async 节点就不能同步驱动"那个约束**（实测：同步驱动 + async
-        #    节点直接报 `No synchronous function provided`）。
-        #    ⚠️ `session.current()` 在那种线程里**认得出会话** —— langchain 的
-        #    `run_in_executor` 会 `copy_context()`（实测过）。
+        # 异步驱动：LangGraph 把同步节点丢进线程跑，行为不变，但解开了"有 async 节点
+        # 就不能同步驱动"那个约束。`session.current()` 在那种线程里认得出会话 ——
+        # langchain 的 `run_in_executor` 会 `copy_context()`。
         return aio.run(graph.ainvoke(init, config))
     except Exception as e:  # noqa: BLE001
         print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
@@ -215,10 +192,10 @@ def _turn(graph, config, text: str, *, answer_to: str = "") -> dict | None:
 
 
 def _say_mode(graph, config, args: argparse.Namespace) -> None:
-    """**非交互**：只跑 `--say` 那一句；有待答就自动补一轮。
+    """非交互：只跑 `--say` 那一句；有待答就自动补一轮。
 
-    ⚠️ 自动补答的上限 **3 轮**是**防死循环**：执行器每轮都可能再问一个，答完又问会
-    一直转下去；三轮够覆盖「一次答一个」的真实节奏，再多就该人工介入了。
+    自动补答的上限 3 轮是防死循环：执行器每轮都可能再问一个，答完又问会一直转下去；
+    三轮够覆盖「一次答一个」的真实节奏，再多就该人工介入了。
     """
     print(f"\n👤 {args.say}")
     result = _turn(graph, config, args.say)
@@ -229,8 +206,7 @@ def _say_mode(graph, config, args: argparse.Namespace) -> None:
         if p is None:
             break
         print(f"\n❓【{p.get('skill')}】问：{asked_text(p)}")
-        # 🔴 **没给 `--answer` 就不自动应答**：把问题打出来就停 ——
-        #    不替用户编一个没说过的前提（模块头原则 6）。
+        # 没给 `--answer` 就不自动应答：把问题打出来就停 —— 不替用户编一个没说过的前提。
         if not args.answer:
             print("   （没给 `--answer` —— 不自动应答；要自动答就带上 `--answer '…'`）")
             break
@@ -243,7 +219,7 @@ def _say_mode(graph, config, args: argparse.Namespace) -> None:
 
 
 def _interactive(graph, config) -> None:
-    """**交互循环** —— 读一句 → 跑一轮 → 摆待答。"""
+    """交互循环 —— 读一句 → 跑一轮 → 摆待答。"""
     print("输入你的请求（空行退出）。试试这些：\n")
     print("  · 你好                    → 主 agent 应该**自己答**（不建 Task）")
     print("  · 帮我做 X                → 需要专业技能 → 委派给隔离执行器")
@@ -262,9 +238,9 @@ def _interactive(graph, config) -> None:
         _dump(result)
         print(BAR)
 
-        # 🔴 **待答：一次摆一个** —— 这个提示符**就是"通道"**（模块头原则 5）：
-        #    在它下面打的字**属于那一条请求**（带 `answer_to` 投回去）。
-        #    **直接回车 = 跳过** → 回到 `👤 `，在那里打的字只给主 agent（这条待答继续挂着）。
+        # 待答：一次摆一个 —— 这个提示符就是"通道"：在它下面打的字属于那一条请求
+        # （带 `answer_to` 投回去）。直接回车 = 跳过 → 回到用户提示符，在那里打的字只给主
+        # agent（这条待答继续挂着）。
         while (p := next_pending(result)) is not None:
             q = asked_text(p)
             print(f"\n❓【{p.get('skill')}】问：{q}")
@@ -283,21 +259,19 @@ def _interactive(graph, config) -> None:
 
 
 def main() -> None:
-    """内置技能 CLI —— **装配 → 跑**（非交互 / 交互两条路），收尾关日志。
+    """内置技能 CLI —— 装配 → 跑（非交互 / 交互两条路），收尾关日志。
 
-    ⚠️ **它自己只做编排**：参数 / 装配 / 两种跑法各在一个私有件里。
-    原来是一个 113 行的函数（`turn` 闭包 ＋ 两条路缠在一起）。
+    它自己只做编排：参数、装配、两种跑法各在一个私有件里。
     """
     args = _parse_args()
 
-    # 🔴 **CLI 进程就是一次会话**（`use` 不开作用域 —— 包 `with` 只是白白多一层缩进）。
-    #    开了它 `thread_id` 才进事件、日志才带会话标识。⚠️ **必须在 `subscribe` 之前** ——
-    #    订阅挂的是**当前会话**。
+    # CLI 进程就是一次会话（`use` 不开作用域 —— 包 `with` 只是白白多一层缩进）。开了它
+    # `thread_id` 才进事件、日志才带会话标识。必须在 `subscribe` 之前 —— 订阅挂的是当前会话。
     session.use(args.thread)
 
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
-    trace.subscribe(_on_event)      # 🔴 显示层从这一刻起只认事件
+    trace.subscribe(_on_event)      # 显示层从这一刻起只认事件
 
     print(BAR)
     print(f"主 agent = 完整 agent（自己决定：直接答 / 自己干 / 委派） · 模型={describe()}")

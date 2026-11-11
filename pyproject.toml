@@ -26,6 +26,10 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "T20"]
 ignore = ["E501"]  # 行长交给 formatter
 
+[tool.ruff.lint.per-file-ignores]
+# 命令行脚本的输出就是 print，库代码里禁它是为了防止调试残留
+"scripts/*.py" = ["T20"]
+
 [tool.pytest.ini_options]
 # tests/ 在 S6 建立（pytest 重写旧单测）；此配置先行占位
 testpaths = ["tests"]

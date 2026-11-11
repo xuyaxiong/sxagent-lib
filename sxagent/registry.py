@@ -1,59 +1,35 @@
-"""技能注册表 —— `{name: Skill}` 的**唯一持有者**。
+"""技能注册表：全进程唯一的一张 `{name: Skill}` 表。
 
-## 这个文件是什么
+`skills.py` 在 import 时登记内置表，此后谁都不许直接拿表。读走 `get` / `all` / `values` /
+`names` / `catalog`，换表走 `registry.testing` 下的三个口子，每次调用查的都是当前那张。
 
-全进程只有这一张技能表：`skills.py` 在 import 时把内置表登记进来（`register_defaults`），
-此后**谁都不许直接拿表** —— 读走 `get()` / `all()` / `values()` / `names()` / `catalog()`，
-换表走 `registry.testing.replace()` / `.extend()` / `.reset()`，每次调用查的都是**当前**那一张。
-（本模块不认识 `Skill`：只在类型标注里 import 它，见 `if TYPE_CHECKING` 那一行。）
+## 不变量
 
-## 设计原则（不变量）
-
-🔴 **对外只给函数，不给 dict。** 任何 `from sxagent.registry import SKILLS` 的写法
-   都是在重新制造一个绑定点 —— 一律走 `get()` / `all()` / `values()`，每次调用查当前表。
-
-🔴 **换表那三个口子在 `testing` 上，不在读 API 的平面上。** 表本身不对外暴露可变引用；
-   "这是装配/测试口"由**结构**说（`registry.testing.…`），不靠名字里有没有前缀。
-
-🔴 **未初始化时 `get()` 直接抛错，不静默返回 None。** 静默的后果是"没有这个技能"
-   这种看着像业务事实的假话，比当场崩掉难查得多（同"禁止静默失配"那条）。
-
-## 关键取舍
-
-**为什么单独一个模块**：这张表原来定义在 `skills.py`，然后被三处各自绑定
-（值导入的 `agent.py`、函数内导入的 `graph.py`……）—— 由此长出两个病：
-① **反向依赖**：`read_skill` 为了读到"替换过的那份表"，得反向 import 编排层；
-② **换一次技能要赋两次值**（漏掉一处，多轮投递时执行器"像换了个人"，实测踩过）。
-那不是隐患，是**当时靠纪律维持的正确性** —— 本模块把纪律换成机制。
-"""
+1. 对外只给函数，不给 dict。`from sxagent.registry import SKILLS` 等于又造一个绑定点。
+2. 换表的口子在 `testing` 上，不和读 API 同层。"这是装配 / 测试口"由结构说，不靠下划线。
+3. 未初始化时 `get()` 直接抛错，不静默返回 None：静默会造出"没有这个技能"这种假事实。"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Mapping
 
-if TYPE_CHECKING:  # 仅用于类型标注 —— **运行时不 import**，否则 registry ↔ skills 成环
+if TYPE_CHECKING:  # 仅用于类型标注 —— 运行时不 import，否则 registry ↔ skills 成环
     from sxagent.skills import Skill
 
 
 class _Registry:
-    """一张内置表 + 一张当前表。
-
-    **为什么要有"内置表"这一层**：`replace` 之后如果直接拿当前表当下次合并的底，
-    case 之间就会**串** —— 第一个 case 装过的技能被第二个 case"合并"进来。
-
-    ⚠️ **今天走不到**（跑批一 case 一子进程，进程内只 `install()` 一次）—— 留着是因为
-    它**本来就该对**：一旦做"同进程多 case"就立刻用得上。
-    """
+    """一张内置表 + 一张当前表。分开是为了 `replace` 之后不串 case：直接拿当前表当下次
+    合并的底，第一个 case 装过的技能会被第二个 case 合并进来。"""
 
     def __init__(self) -> None:
-        #: 内置技能表（`skills.py` 启动时登记）。**只读**，`replace` 不碰它。
+        #: 内置技能表（`skills.py` 启动时登记）。只读，`replace` 不碰它。
         self._defaults: dict[str, Skill] = {}
-        #: 当前生效表。**整体替换引用**而不是原地 clear+update —— 并发读的人
-        #: 要么看到旧的完整一份、要么看到新的完整一份，不会撞见半张空表。
+        #: 当前生效表。整体替换引用而不是原地 clear+update —— 并发读的人要么看到旧的
+        #: 完整一份、要么看到新的完整一份，不会撞见半张空表。
         self._current: dict[str, Skill] = {}
         self._initialized = False
-        #: **测试口** —— 换表那三个动作，见 `_Testing`。
-        #: ⚠️ 它和读 API **不在一个平面上**：读是生产的，换表是装配/测试的。
+        #: 测试口 —— 换表那三个动作，见 `_Testing`。
+        #: 它和读 API 不在一个平面上：读是生产的，换表是装配 / 测试的。
         self.testing = _Testing(self)
 
     # ──────────────────────────── 写（唯一入口） ────────────────────────────
@@ -72,7 +48,7 @@ class _Registry:
         return self._current.get(name)
 
     def all(self) -> dict[str, Skill]:
-        """当前表**副本** —— 调用方随便改，改不到注册表。"""
+        """当前表副本 —— 调用方随便改，改不到注册表。"""
         self._require_init()
         return dict(self._current)
 
@@ -85,10 +61,7 @@ class _Registry:
         return list(self._current)
 
     def catalog(self) -> str:
-        """技能清单的**唯一排版来源**（渐进式披露第一层）。
-
-        以前三处各写一遍 —— 改一处忘另一处就是两副面孔。
-        """
+        """技能清单的唯一排版来源（渐进式披露第一层）。这里改一次，别处都跟着变。"""
         self._require_init()
         return "\n".join(f"- {s.name}：{s.description}" for s in self._current.values())
 
@@ -103,19 +76,9 @@ class _Registry:
 
 
 class _Testing:
-    """**换表那三个口子** —— `registry.testing.reset()` / `.replace()` / `.extend()`。
+    """换表那三个口子，单独成对象是为了把"这是测试口"从名字升级成结构。
 
-    🔴 **为什么单独一个对象**：它们原来和读 API 摆在 `_Registry` 的**同一个平面**上 ——
-    名字上看不出哪个是测试口，而它们**改的是全进程那一张表**（任何一次误调都会改掉它）。
-    ⇒ 把"这是测试口"从**名字**升级成**结构**：生产代码里写出 `registry.testing.reset()`
-    会**自己看见**不对劲，而不是靠"记得别乱调"。
-
-    ⚠️ **它不解决"进程级共享"** —— 技能表是**静态配置**，进程级共享是合理的
-    （真正会串数据的是产物库那种运行期状态，见 `session.py`）。
-
-    ⚠️ **`app/runtime.py` 的 `install()` 会调它，那不是"产品在跑测试"** ——
-    `install()` 就是**装配**（跑批每个 case 开始前把技能集重置成内置表），
-    而"重置技能表"这个动作本来就**只该在装配那一刻**发生。它和测试调的是同一件事。
+    它们改的是全进程那张表，生产代码里写出 `registry.testing.reset()` 会自己看见不对劲。
     """
 
     def __init__(self, reg: _Registry) -> None:
@@ -127,19 +90,15 @@ class _Testing:
         self._reg._current = dict(self._reg._defaults)
 
     def replace(self, skills: Mapping[str, Skill]) -> None:
-        """**整体替换**当前表（评测的 `skills_mode: replace`）。内置表不受影响。"""
+        """整体替换当前表（评测的 `skills_mode: replace`）。内置表不受影响。"""
         self._reg._require_init()
         self._reg._current = dict(skills)
 
     def extend(self, extra: Mapping[str, Skill]) -> None:
-        """在**当前表**上合并（评测的 `skills_mode: extend`，默认）。
-
-        ⚠️ 合并在**当前表**上而不是内置表上 —— 调用方若要"干净地加几个"，
-        先 `reset()` 再 `extend()`。两步是分开的，因为"重置"和"叠加"是两件事。
-        """
+        """在当前表上合并。要"干净地加几个"，先 `reset()` 再 `extend()`，两步是两件事。"""
         self._reg._require_init()
         self._reg._current = {**self._reg._current, **extra}
 
 
-#: 全进程唯一实例。**只导入这个对象，不要复制表**。
+#: 全进程唯一实例。只导入这个对象，不要复制表。
 registry = _Registry()

@@ -1,22 +1,13 @@
-"""跑 agent 的**装配 + 记录层** —— 交互式入口与跑批**共用**的那部分。
+"""跑 agent 的装配与记录层，交互式入口和跑批共用。
 
     from app.runtime import install, snapshot, dump_run_record
 
-**装什么**：技能（从目录读，或 case 内联）→ 换进 `sxagent.registry`（唯一入口）；
-再把 `store_artifact` / `run_task` / 模型调用包一层**记录器**
-（产物流水、执行器流水、token 计数）。
+装什么：把技能读进 `sxagent.registry`；再给 `store_artifact` / `run_task` / 模型调用各包一层
+记录器，记产物流水、执行器流水、token 计数。录什么：`snapshot()` 抓一轮全量快照，
+`dump_artifacts()` / `dump_run_record()` 落成逐轮全记录加原始 trace 附录。
 
-**录什么**：`snapshot()` 抓一轮的全量快照；`dump_artifacts()` / `dump_run_record()`
-把它落成人能读的文件（逐轮全记录 + 原始 trace 附录）。
-
-🔴 **为什么两个入口必须共用这一层**：它们要产**同一种记录格式**。
-交互式入口就是"把脚本预置的 turns 换成真人当场打的字"—— 格式不一致的话，
-收回来的一堆 run 没法比，而"比"正是现在要做的事。
-
-⚠️ **故障注入不在这儿**：它是**纯测试旋钮**（交互式入口根本没有那个开关），
-住在本模块就是"测试关切混进产品装配"。`install()` 返回的 `fault` / `stream_fault`
-**形状不变**（空 dict），由测试侧往里写 —— 运行记录里带着它们，产品那条路也要写出这个键。
-"""
+两个入口必须共用这一层，因为要产出同一种记录格式：交互式入口就是把预置 turns 换成人当场打
+的字，格式不一致，收回来的一堆 run 就没法比。故障注入不在这里，那是纯测试旋钮。"""
 
 from __future__ import annotations
 
@@ -39,7 +30,7 @@ from sxagent.config import app_root
 
 
 class UsageCounter(BaseCallbackHandler):
-    """挂在模型实例上，数**所有** LLM 调用（主 agent + 执行器 + 试答）。"""
+    """挂在模型实例上，数所有 LLM 调用（主 agent + 执行器 + 试答）。"""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -79,28 +70,18 @@ ROOT = app_root()
 #: 只读资源（随包带）：冻结后是 `sys._MEIPASS`，开发时同 ROOT。
 RESOURCE_ROOT = sxagent_config.RESOURCE_ROOT
 
-#: **技能目录的默认值** —— 程序旁边的 `skills/`（用户往里丢技能包就加技能）。
-#: 🔴 **冻结 / 开发是同一个表达式**：`skills/` 在仓库顶层，两边指的本来就是同一个地方 ——
-#: 原来那条 `if FROZEN` 分叉**没有理由**，删了。
+#: 技能目录：程序旁边的 `skills/`。冻结与开发用同一个表达式，两边指的是同一个地方。
 DEFAULT_SKILLS_DIR = ROOT / "skills"
 
-#: **运行记录落哪** —— 应用根下的 `runs/`：程序旁边（便携、用户找得到、方便整包发回来），
-#: 开发时就是仓库顶层的 `runs/`。
-#: 🔴 **冻结 / 开发是同一个表达式**：原来开发那条走测试目录 —— 那是"跑批的输出住在测试
-#: 目录里"，**没有理由**（同 `DEFAULT_SKILLS_DIR` 那条）。
+#: 运行记录：应用根下的 `runs/`，程序旁边（便携、找得到、方便整包发回来）。
 RUNS_DIR = ROOT / "runs"
 
-#: 首次运行时铺进用户技能目录的**示例技能**（让他们知道技能包该长什么样）。
-#: 从只读资源里取 —— 开发时就是 `skills/` 本身。
+#: 首次运行铺进用户技能目录的示例技能，从只读资源里取（开发时就是 `skills/`）。
 SEED_SKILLS_DIR = RESOURCE_ROOT / "skills"
 
 
 def ensure_app_dirs() -> list[str]:
-    """首次运行把目录铺好 —— **只在冻结后做**（开发时目录本来就在）。
-
-    建 `skills/` + `runs/`；`skills/` 是空的就往里放一遍示例技能。
-    返回做了哪些事（给启动时打一行用）。
-    """
+    """首次运行把目录铺好，只在冻结后做。返回做了哪些事，给启动时打一行用。"""
     if not FROZEN:
         return []
     done: list[str] = []
@@ -111,8 +92,7 @@ def ensure_app_dirs() -> list[str]:
     if not any(DEFAULT_SKILLS_DIR.glob(f"*/{ENTRY_NAME}")) and SEED_SKILLS_DIR.is_dir():
         n = 0
         for src in sorted(p for p in SEED_SKILLS_DIR.iterdir() if p.is_dir()):
-            # 只铺**真能当技能**的目录：有 `SKILL.md` 才算
-            # （源目录里的 `README.md` 是适配说明，不是技能 —— 铺过去只会让人困惑）
+            # 只铺真能当技能的目录：有 `SKILL.md` 才算（`README.md` 是适配说明）
             if not (src / ENTRY_NAME).is_file():
                 continue
             shutil.copytree(src, DEFAULT_SKILLS_DIR / src.name, dirs_exist_ok=True)
@@ -126,13 +106,11 @@ def ensure_app_dirs() -> list[str]:
 
 
 def _load_skills_dir(path_str: str) -> dict:
-    """从目录装技能包（相对路径按**仓库根**解析，子进程 cwd 变了也不受影响）。
+    """从目录装技能包（相对路径按仓库根解析，子进程 cwd 变了也不受影响）。
 
-    🔴 **格式解析不在这里** —— "技能包长什么样、怎么读"是**领域知识**，
-    在 `sxagent.skill_pack`。这里只做一件事：**把相对路径定到仓库根，然后交给它**。
+    格式解析在 `sxagent.skill_pack`，这里只把路径定到仓库根。
     """
-    # ⚠️ **局部导入是有意的**：`sxagent.trace` 一被导入就开日志文件（模块级的 `_fh`），
-    # 而本模块也被**不该产生日志**的地方导入。**别提到模块级去。**
+    # 局部导入是有意的：`trace` 一被导入就开日志文件，而本模块也被不该产生日志的地方导入。
     from sxagent import trace
     from sxagent.skill_pack import load_skills_dir
 
@@ -149,18 +127,9 @@ def _load_skills_dir(path_str: str) -> dict:
 
 
 def _install_skills(case: dict) -> None:
-    """**技能集** —— `case.skills_dir` 读目录 / `case.skills` 内联，换进注册表。
+    """技能集：从 `case.skills_dir` 读目录或从 `case.skills` 内联，换进注册表。
 
-    🔴 **先 reset 再叠加**。三件事，每件都曾是"靠纪律"：
-      1. 原来这里手拼 `{**内置表, **extra}`，底取自"上一个 case 改过的表"
-         —— 上一个是 `replace` 模式时，它的技能就漏进这个 case（跨 case 串味）。
-         ⚠️ **今天走不到**（跑批是**一 case 一子进程**，进程内只 `install()` 一次）。
-         留着是因为它**本来就该对**：`reset()` 回到独立的**内置表**，一旦哪天做
-         "同进程多 case"（跑批提速 / 批量重放）就立刻用得上。
-      2. 原来要往两个模块各赋一次值 —— 漏一句就是"用户答了，执行器却像换了个人"
-         （**这条实测踩过**：`skills_mode: replace` + 多轮 + 有等待任务的 case）。
-         现在只有一个入口（`registry.testing`）。
-      3. `extra` 为空时**也要 reset**：同 1，为"同进程多 case"留的。
+    先 `reset()` 再叠加，`extra` 为空时也要 reset，同进程多 case 才不会串味。
     """
     import sxagent.skills
 
@@ -178,10 +147,9 @@ def _install_skills(case: dict) -> None:
 
 
 def _record_artifacts() -> list[dict]:
-    """**产物写入流水** —— 记「谁在什么时候写了什么」，用来判并发与归属。
+    """产物写入流水：记谁在什么时候写了什么，用来判并发与归属。
 
-    ⚠️ **签名要跟着 `sxagent.artifacts.store_artifact` 走**：它变过（加 `file_type`），
-    漏改这里就是整轮 `TypeError` —— 和 `run_task` 那个包装同一个坑。
+    签名要跟着 `sxagent.artifacts.store_artifact` 走，漏改就是整轮 `TypeError`。
     """
     import sxagent.artifacts
 
@@ -203,16 +171,15 @@ def _record_artifacts() -> list[dict]:
         )
         return aid
 
-    # `write_artifact` 的工具体在 `artifacts.py` 里按**模块全局**找 `store_artifact`，所以这里改得到
+    # `write_artifact` 的工具体在 `artifacts.py` 里按模块全局找 `store_artifact`，所以这里改得到
     sxagent.artifacts.store_artifact = rec_store
     return writes
 
 
 def _record_run_tasks() -> list[dict]:
-    """**执行器调用流水** —— 记「哪个线程在跑哪个 skill」，用来判产物归属。
+    """执行器调用流水：记哪个线程在跑哪个 skill，用来判产物归属。
 
-    ⚠️ **两条路都汇到 `agent.dispatch`**，那里走**模块属性** `executor.run_task`
-    （晚绑定）—— 所以改这一处就管两条路；原来是值导入，得两处各改一次。
+    两条路都汇到 `agent.dispatch`，那里走模块属性 `executor.run_task`（晚绑定）。
     """
     import sxagent.artifacts
     import sxagent.executor
@@ -221,11 +188,8 @@ def _record_run_tasks() -> list[dict]:
     orig_run_task = sxagent.executor.run_task
 
     async def rec_run_task(skill, briefing: str = "", user_turns=None):
-        # 本次 run **前后**产物库的差集 = 这次真写出来的。
-        # ⚠️ 不能按线程归属：产物写入发生在 langgraph 的工具线程里，和 run_task 的线程
-        #    对不上（实测 threads 完全不重合），按线程判会**永远不报**。
-        # ⚠️ 签名要跟着 `sxagent.executor.run_task` 走：它变过两次（`given`→`briefing`、
-        #    去掉 `artifacts` 参数），**每次都漏改这里、每次都整轮崩** —— 改签名时记得搜一遍。
+        # 前后产物库的差集 = 这次真写出来的。不能按线程归属：产物写入发生在 langgraph 的
+        # 工具线程里，和 run_task 的线程对不上。签名跟着 `executor.run_task` 走。
         before = set(sxagent.artifacts.ids())
         out = await orig_run_task(skill, briefing, user_turns)
         run_tasks.append(
@@ -244,11 +208,8 @@ def _record_run_tasks() -> list[dict]:
 
 
 def _count_tokens() -> UsageCounter:
-    """**token / 调用计数** —— 三处**值导入**一起换（`agent` / `executor` / `llm`）。
-
-    ⚠️ 漏一处 = 那条路上的调用**不计费**（实测踩过：只换了两个模块，
-    执行器那一路的 token 全丢了）。
-    """
+    """token 与调用计数：三处值导入一起换（`agent` / `executor` / `llm`）。漏一处，那条路上
+    的调用就不计费。"""
     import sxagent.agent
     import sxagent.config
     import sxagent.executor
@@ -267,12 +228,7 @@ def _count_tokens() -> UsageCounter:
 
 
 def install(case: dict) -> dict:
-    """装好全部观测与注入。**必须在 `build()` 之前调用**。
-
-    ⚠️ **它自己只做编排**：清库 → 技能 → 三处打桩 → 开关。
-    每一步各在一个私有件里（`_install_skills` / `_record_artifacts` /
-    `_record_run_tasks` / `_count_tokens`）。原来是一个 64 行的函数。
-    """
+    """装好全部观测与注入，必须在 `build()` 之前调用。"""
     import sxagent.agent
     import sxagent.artifacts
 
@@ -283,17 +239,14 @@ def install(case: dict) -> dict:
     # ③ / ③′ 两处打桩：产物写入流水、执行器调用流水
     writes = _record_artifacts()
     run_tasks = _record_run_tasks()
-    # ④ 执行路径开关（case 可选）—— 默认 `"auto"`（两条路都开，产品行为）。
-    # 🔴 **它是"平台造路"**：想验"执行器的正文交付"就得先让委派**真的发生**，
-    # 而"走哪条路"是模型的自由选择 —— 靠碰运气压路径的断言必然脆。
-    # 见 `sxagent/agent.EXEC_PATH` 的 docstring。
+    # ④ 执行路径开关（case 可选），默认 auto（两条路都开）。想验执行器的正文交付就得让
+    # 委派真的发生，靠碰运气压路径的断言必然脆。见 `sxagent/agent.EXEC_PATH`。
     sxagent.agent.EXEC_PATH = str(case.get("exec_path") or "auto")
     # ④′ token / 调用计数
     counter = _count_tokens()
 
-    # ⑤ **故障注入不在这儿** —— 它是**测试旋钮**（交互式入口根本没有那个开关），
-    #    住在产品装配里就是"测试关切混进产品模块"。测试侧在 `install()` **之后**
-    #    往下面这两个 dict 里写（它们是**同一个对象**，所以运行记录照旧带着它们）。
+    # ⑤ 故障注入不在这里。它是测试旋钮，测试侧在 `install()` 之后往返回的这两个 dict
+    #    里写（同一个对象，所以运行记录照旧带着它们）。
     return {
         "counter": counter,
         "writes": writes,
@@ -306,19 +259,17 @@ def install(case: dict) -> dict:
 # ──────────────────────────── 快照 ────────────────────────────
 
 
-#: 主 agent 上下文**告警线** —— **只告警，不判红**（用户定：
-#: *"删掉这个测试，把这个信息记录到日志 warning 里面不就完了"*）。
+#: 主 agent 上下文告警线：只告警，不判红。
 #:
-#: 为什么不做成断言：**读产物是主 agent 的合法能力**（它也要能干活、能按需读），
-#: 拿上下文大小判红 = 罚一个合法能力，而且聊得久、多读一次技能原文都会误伤。
-#: 告警线给的是**读数 + 一句提示**，代价由看的人自己判断。
+#: 读产物是主 agent 的合法能力，拿上下文大小判红等于罚一个合法能力，聊得久也会误伤；
+#: 告警线给的是读数加一句提示，代价由看的人自己判断。
 #:
-#: 参照读数（历史跑批）：单技能隔离场景 517–1109 字；多技能长产物场景 7890–14832 字。
+#: 参照读数（历史跑批）：单技能隔离 517–1109 字，多技能长产物 7890–14832 字。
 CTX_WARN_CHARS = 12000
 
 
 def ctx_warn(total: int) -> str:
-    """超告警线时给一句提示，正常时返回空串。**只提示，不判红。**"""
+    """超告警线时给一句提示，正常时返回空串。只提示，不判红。"""
     if total <= CTX_WARN_CHARS:
         return ""
     return (
@@ -328,7 +279,7 @@ def ctx_warn(total: int) -> str:
 
 
 def _ctx_chars(messages: list) -> int:
-    """主 agent 上下文体积 —— 与 `sxagent/__main__._ctx_chars` **同一口径**（可比）。"""
+    """主 agent 上下文体积，与 `sxagent/__main__._ctx_chars` 同一口径，两边可比。"""
     total = 0
     for m in messages:
         total += len(str(m.content))
@@ -347,32 +298,26 @@ def _last_ai_text(state: dict) -> str:
 def _sys_prompt_chars() -> int:
     """主 agent 的 system prompt 体积。
 
-    ⚠️ **它不在 `state["messages"]` 里**（`create_agent(system_prompt=...)` 不落 state），
-    所以 `main_ctx_chars` 量不到它。口径与 `sxagent/__main__._ctx_chars` 保持一致（可比），
-    但真实上下文 = `main_ctx_chars + sys_prompt_chars`，这个数也记下来。
+    它不在 `state["messages"]` 里，`main_ctx_chars` 量不到；真实上下文是两者之和。
     """
     import sxagent.agent
 
-    # 口径必须与 `agent.build_agent` 里拼的那份**完全一致** —— 所以两边都调
-    # `registry.catalog()`，不各写一份格式化（原来是手抄的，改一处忘另一处就量错）。
+    # 口径必须与 `agent.build_agent` 拼的那份一致，所以两边都调 `registry.catalog()`。
     return len(sxagent.agent._MAIN_PROMPT) + len("\n\n可用技能：\n" + registry.catalog())
 
 
 def _msg_record(m) -> dict:
-    """**一条 LangChain 消息 → 记录里那份**（原文，不截断）。
-
-    🔴 **交接对象读 `additional_kwargs`，不从 `content` 反推** —— 回执的结构化形态
-    搭同一趟车（实测**不会漏给模型**）。**禁止反结构化任何 LLM 正文输出。**
-    """
+    """一条 LangChain 消息 → 记录里那份（原文，不截断）。交接对象读
+    `additional_kwargs`，不从 `content` 反推。"""
     kwargs = getattr(m, "additional_kwargs", None) or {}
     return {
         "kind": type(m).__name__,
         "content": str(m.content),
         "tool_call_id": getattr(m, "tool_call_id", None),
-        #: 🔴 **交接对象** —— 回执的结构化形态。记录层**读它**。
+        #: 交接对象：回执的结构化形态，记录层读它。
         "handoff": kwargs.get("handoff"),
-        #: **平台注入的标记**（`sxagent.handoff.INJECTED`）—— 标明这条**不是主 agent 说的**。
-        #: 透传（`finalize`）注入的是 `AIMessage`，不打标记就会被标成"主 agent 输出"。
+        #: 平台注入的标记（`sxagent.handoff.INJECTED`），标明这条不是主 agent 说的。
+        #: 透传注入的是 `AIMessage`，不打标记就会被标成"主 agent 输出"。
         "injected_by": kwargs.get("injected_by"),
         "tool_calls": [
             {"id": c.get("id"), "name": c.get("name"), "args": c.get("args")}
@@ -393,14 +338,13 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
         for c in (getattr(m, "tool_calls", None) or [])
         if c.get("name") == "delegate"
     ]
-    #: **全部**工具调用（名字 + 参数摘要）—— 主 agent 读了哪个产物、写了什么，
-    #: 这里直接可查。原来只记 delegate，`read_artifact` 只能靠"消息类型对不上"反推。
+    #: 全部工具调用（名字 + 参数摘要）：主 agent 读了哪个产物、写了什么，这里直接可查。
     tool_calls = [{"name": n, "args": a} for n, a in trace.tool_calls_of(new)]
     return {
         "turn": idx,
         "user": user,
-        #: 这句话是谁给的 —— `scripted`（脚本预置）/ `human`（交互式入口当场打的）。
-        #: 日志必须如实标：读的人不能把"预置的答复"当成真实用户行为。
+        #: 这句话是谁给的：`scripted`（脚本预置）或 `human`（交互式入口当场打的）。
+        #: 日志要如实标，读的人不能把预置的答复当成真实用户行为。
         "input_source": "scripted",
         "reply": _last_ai_text(state),
         "tasks": state.get("tasks") or [],
@@ -410,13 +354,12 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
         "artifacts": {k: len(v["content"]) for k, v in artifacts.items()},
         "delegate_calls": delegates,
         "tool_calls": tool_calls,
-        #: 本轮**全部新消息**（原文，不截断）—— 逐轮审计文件靠它渲染"运行全记录"：
-        #: 用户输入 / 主 agent 输出 / 工具调用与返回 / 平台注入的台账，一条都不落。
-        #: `tool_call_id` 与 `tool_calls[].id` 配对，用来判**这条返回是谁的**。
+        #: 本轮全部新消息（原文，不截断），逐轮审计文件靠它渲染运行全记录。
+        #: `tool_call_id` 与 `tool_calls[].id` 配对，用来判这条返回是谁的。
         "messages": [_msg_record(m) for m in new],
         "new_msg_kinds": [type(m).__name__ for m in new],
         "log": state.get("log") or [],          # 渲染记录（给人看 / `_run.md`）
-        "actions": state.get("actions") or [],  # 🔴 结构化事实（**断言读它**，别读 log）
+        "actions": state.get("actions") or [],  # 结构化事实（断言读它，不读 log）
         "wall_s": wall_s,
     }
 
@@ -432,12 +375,10 @@ def _slug(s: str, n: int = 40) -> str:
 
 
 def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
-    """把产物**原文**落盘 —— **主 agent 的上下文里没有的东西**，人能看到。
+    """把产物原文落盘，主 agent 上下文里没有的东西，人能看到。
 
-    🔴 这是**唯一可靠的"完整性"真值来源**：**只有把原文摊开给人看，"这份到底完不完整"
-    才有答案** —— 中间隔着"谁转述 / 谁截断"的任何一层都不算。
-
-    落 `runs/<tag>/artifacts/<case>__r<rep>/`：每个产物一个文件 + 一份 `_index.md`。
+    只有把原文摊开给人看，"这份完不完整"才有答案。落 `runs/<tag>/artifacts/<case>__r<rep>/`，
+    每个产物一个文件，外加一份 `_index.md`。
     """
     from sxagent import artifacts
 
@@ -449,12 +390,10 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 
     rows = ["| 产物 | 标题 | 字数 | 类型 | 文件 |", "|---|---|---|---|---|"]
     for aid, a in artifacts.items():
-        # 类型和文件名都取**记录里那份**（`store_artifact` 按声明的类型定好的）——
-        # 这里另算一遍的话，会和它当场落盘时写的那份对不上。
+        # 类型和文件名都取记录里那份（`store_artifact` 按声明的类型定好的），
+        # 这里另算一遍会和它当场落盘写的那份对不上。
         fn = a.get("file") or f"{aid}_{_slug(a['title'])}{a.get('ext', '.md')}"
-        # 🔴 **落盘 = 库里那份，一字不加**（"正文就是正文 平台不必加料"）
-        #    —— 与 `store_artifact` 当场落盘**同一条规矩**（来源头的 H1 曾冒充
-        #    文档标题、与技能模板的 H2 撞名）。
+        # 落盘就是库里那份，一字不加，和 `store_artifact` 当场落盘同一条规矩。
         (d / fn).write_text(a["content"], encoding="utf-8")
         rows.append(
             f"| `{aid}` | {a['title']} | {len(a['content'])} "
@@ -473,23 +412,20 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 
 #: 出口分类 → 给读日志的人看的记号。
 #:
-#: 🔴 **判据不在本文件里** —— 从 `sxagent.handoff`（段名与出口分类的唯一来源）推。
-#: 原来这里手抄了一组开场白做前缀匹配，回执一改格式就**一条都不中**
-#: （实测：新格式 0/8、旧格式 38/38）—— 而且**不会报错，只会静默失效**。
+#: 判据不在本文件里，从 `sxagent.handoff`（段名与出口分类的唯一来源）推。
+#: 这里手抄一份对应关系，回执改格式就静默失效，所以覆盖性要有检查盯着。
 _RECEIPT_KINDS: dict[str, str] = {
     "completed": "✅ **交付回执**（执行器已写入产物库 —— 平台只说这个事实）",
     "waiting": "❓ **执行器申报要信息**（`ask_user`：平台先试答，答不上转达给用户）",
     "failed": "⚠️ **既没交付、也没说要什么**（推满轮次，交给主 agent 判）",
-    # ⚠️ `fault` 是后加的出口，加的时候**漏了这两张表** —— 于是 `_run.md` 里那条回执
-    #    **没有出口标记**、段标签回落成裸 key。这是"一套，别分叉"在**审计层**的复现
-    #    （第一次加新出口就漏了）—— 覆盖性要有检查盯着（漏一个要能发现）。
+    # 加新出口时，这张表和 `_RECEIPT_LABEL` 要同时补，漏一个就是静默回落成裸 key。
     "fault": "⚠️ **平台故障**（这一轮**没跑成** —— 不是执行器干不了）",
     "rejected_skill": "⛔ **被平台拒绝**：没有这个技能",
     "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
 }
 
 
-#: 工具返回的**来源**（读日志的人最需要知道的一条：这段字是谁写的）
+#: 工具返回的来源（读日志的人最需要知道的一条：这段字是谁写的）
 _TOOL_SOURCE: dict[str, str] = {
     "delegate": "平台（`delegate` 的回执：**平台的框架话 + 执行器的原话**拼在一起）",
     "read_skill": "平台（技能原文 —— 主 agent 主动读的，渐进式披露第二层）",
@@ -499,7 +435,7 @@ _TOOL_SOURCE: dict[str, str] = {
 }
 
 
-#: 段的**标签**（给读日志的人看）。**段名本身不在这里** —— 从 `sxagent.handoff.SECTION` 取。
+#: 段的标签（给读日志的人看）。段名本身不在这里，从 `sxagent.handoff.SECTION` 取。
 _RECEIPT_LABEL: dict[str, str] = {
     "deliver": "平台的框架话 · 这条回执属于哪种出口",
     "asked": "**它申报要的那句原话**（`ask_user` 的参数，未经转述）",
@@ -507,7 +443,7 @@ _RECEIPT_LABEL: dict[str, str] = {
     "report": "**执行器的原话**（它说了什么、在问什么）",
     "agent_answer": "**主 agent 补的信息**（它说的）",
     "next": "平台给主 agent 的指示",
-    # 措辞与 `handoff.SOURCE_NOTE["fault"]` **同一句**（一套，别分叉）
+    # 措辞与 `handoff.SOURCE_NOTE["fault"]` 同一句，一套别分叉
     "fault": "**平台说的** —— 不是执行器说的",
     "not_dispatched": "平台的框架话 · 这次**没有派发**",
     "available_skills": "平台列出的可用技能",
@@ -516,11 +452,7 @@ _RECEIPT_LABEL: dict[str, str] = {
 
 
 def _injected_label(tag: str | None) -> str:
-    """平台注入的标记 → 记录层怎么标这条消息。**读标记，不读内容**。
-
-    标记的**声明处**在 `sxagent.handoff.INJECTED`（和段名、出口分类放一起）——
-    这里只做展示，不另写一份。
-    """
+    """平台注入的标记 → 记录层怎么标这条消息。读标记，不读内容。"""
     if not tag:
         return ""
     from sxagent.handoff import INJECTED
@@ -529,17 +461,7 @@ def _injected_label(tag: str | None) -> str:
 
 
 def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
-    """**回执对象** → 「哪一段 / 写了什么」若干段。
-
-    回执里混着平台的框架话和执行器的原话，不拆开就只能靠读者从一大段文字里猜
-    哪句是谁说的。
-
-    🔴 **读对象，不读文本**（用户：*"禁止你反结构化任何 llm 正文输出"*）。
-    原来这里靠**解析渲染出来的文本**（按段名切），回执一改措辞就**全部静默失效**
-    （实测：新格式 0/8 命中、旧格式 38/38），后果是回执在 `_run.md` 里既丢了
-    "谁写的"分段、又掉进 1200 字兜底截断（实测一次把 **12560 字切成 1200**）。
-    **那条路已经删掉** —— 结构一旦渲染成文本就回不去了，不要试图解析回来。
-    """
+    """回执对象 → 哪一段、写了什么。读对象，不读文本。"""
     from sxagent.handoff import HOPS
 
     sections = handoff.get("sections") or {}
@@ -548,12 +470,7 @@ def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
 
 
 def _turn_summary(turns: list[dict], i: int) -> list[str]:
-    """每轮开头的小结 —— 回答"系统反问了吗 / 用户输入是谁给的 / 平台做了什么"。
-
-    用户要求：*"skill 里面不是有提问嘛…它是否反问了 是否用户输入了
-    是不是你模拟用户输入的"* —— **测试里的"用户"是预置的字符串，
-    不是真人即时输入**，这一点必须在日志里说清楚，否则读的人会以为看到了真实交互。
-    """
+    """每轮开头的小结：有没有反问、用户输入是谁给的、平台做了什么。"""
     t = turns[i]
     prev = turns[i - 1] if i > 0 else None
     human = t.get("input_source") == "human"
@@ -562,7 +479,7 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
         out.append("- 上一轮：无（首轮）")
     else:
         waiting = [x for x in (prev.get("tasks") or []) if x.get("stage") == "waiting_for_input"]
-        # 🔴 读 `actions`（对象），不读 `log`（句子）—— 见 `State.actions` 的注释
+        # 读 `actions`（对象），不读 `log`（句子），见 `State.actions` 的注释
         relayed = [a for a in (prev.get("actions") or []) if a.get("did") == "relay"]
         if waiting:
             who = "、".join(f"`{x['id']}`（{x['skill']}）" for x in waiting)
@@ -578,8 +495,7 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
         else "- 本轮输入：**脚本预置**（跑批 case 里写死的字符串）"
         "，**不是真人即时输入**"
     )
-    # ⚠️ 这里原来是从日志句子里 `split('→')[-1]` 切出"平台动作"那句话 —— 反解析。
-    #    现在读对象，自己渲染一句。
+    # 平台动作读对象自己渲染一句，不切日志句子。
     own = (
         (t.get("actions") or [])[len(prev.get("actions") or []) :] if prev else (t.get("actions") or [])
     )
@@ -594,10 +510,9 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
 
 
 class _ToolPairing:
-    """把**工具调用**和它的**返回**配起来 —— 优先按 `tool_call_id`，退化为按顺序。
+    """把工具调用和它的返回配起来：优先按 `tool_call_id`，退化为按顺序。
 
-    ⚠️ **为什么必须 id 优先**：并行调用时按顺序配会串（两个工具同时发，返回顺序不保证）。
-    老数据没有 id，只能退回按顺序 —— 那是有损的，所以只在 `id` 缺失时才走。
+    并行调用时按顺序配会串，所以 id 优先；老数据没有 id 才退回按顺序，那是有损的。
     """
 
     def __init__(self) -> None:
@@ -631,13 +546,12 @@ class _ToolPairing:
 
 
 def _render_ai(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
-    """主 agent 的**一段话** ＋ 它**调的工具** —— 每条各占一个编号。"""
+    """主 agent 的一段话和它调的工具，每条各占一个编号。"""
     out: list[str] = []
     content = str(m.get("content") or "")
     if content.strip():
         n += 1
-        # 🔴 **按标记判来源，不按"内容像不像"** —— 透传（`finalize`）注入的
-        # AIMessage 里装的是**执行器的原话**，标成"主 agent 输出"就是来源标错。
+        # 按标记判来源，不按内容像不像：透传注入的 AIMessage 里装的是执行器的原话。
         who = _injected_label(m.get("injected_by"))
         out += [
             f"**{n}. {who or '🤖 主 agent 输出'}**"
@@ -665,12 +579,8 @@ def _render_ai(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
 
 
 def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
-    """一次**工具返回** —— 按**对象**渲染，不解析文本。
-
-    四种形状各有各的处置：`read_*`（正文另有出处，只写"读了啥"）、
-    `delegate`（回执对象在 `additional_kwargs` 上搭同一趟车）、
-    **没有对象的 `delegate`**（机制破了，如实说）、其余（原样照录，超长标截断）。
-    """
+    """四种形状各有处置：`read_*`（正文另有出处，只写读了啥）、`delegate`（回执对象在
+    `additional_kwargs` 上）、没有对象的 `delegate`（机制破了，如实说）、其余（原样照录）。"""
     out: list[str] = []
     content = str(m.get("content") or "")
     n += 1
@@ -684,8 +594,8 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
         "",
     ]
     if tool in ("read_artifact", "read_skill"):
-        # 🔴 正文/原文**不进日志**（只写"读了啥、谁读的"）——
-        # 产物落盘在 `art_*`，技能原文在 `skills/`，都另有出处。
+        # 正文和原文不进日志，只写读了啥、谁读的：产物落盘在 `art_*`，
+        # 技能原文在 `skills/`，都另有出处。
         what = "产物" if tool == "read_artifact" else "技能"
         key = "artifact_id" if tool == "read_artifact" else "skill_name"
         out += [
@@ -696,7 +606,7 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
             "",
         ]
         return out, n
-    # 🔴 `delegate` 的返回**按对象渲染**（不解析文本）——
+    # `delegate` 的返回按对象渲染，不解析文本：
     # 平台在 `_cmd` 里把回执对象挂在 `additional_kwargs["handoff"]` 上搭同一趟车。
     parts = _receipt_sections(handoff) if (tool == "delegate" and handoff) else []
     if parts:
@@ -704,8 +614,8 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
             # label 自带加粗记号，这里不要再包一层
             out += [f"　{label}：", "", "```", text, "```", ""]
     elif tool == "delegate":
-        # 走不到：所有 delegate 返回都经 `_cmd` 带上对象。真到了这里说明**机制破了** ——
-        # 如实说出来，**不要**退回解析文本（那正是回执反解析那次事故的做法）。
+        # 走不到：所有 delegate 返回都带对象。真到了这里说明机制破了 ——
+        # 如实说出来，不要退回解析文本。
         out += [
             "⚠️ **这条回执没有结构化对象**（机制破了，不该发生）—— 原文照录，不做解析：",
             "",
@@ -725,7 +635,7 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
 
 
 def _render_system(m: dict, n: int) -> tuple[list[str], int]:
-    """**平台注入** —— 每轮开头自动塞给主 agent 的那条**任务台账**。"""
+    """平台注入：每轮开头自动塞给主 agent 的那条任务台账。"""
     n += 1
     return [
         f"**{n}. 📌 平台注入**（每轮开头自动塞给主 agent 的**任务台账** —— "
@@ -739,12 +649,7 @@ def _render_system(m: dict, n: int) -> tuple[list[str], int]:
 
 
 def _render_unknown(m: dict, n: int) -> tuple[list[str], int]:
-    """**未知消息类型**的兜底。
-
-    ⚠️ 切了**必须标**（用户定的规矩）：一声不吭的一刀，读的人分不清
-    "它就这么多"和"被切了"，而这两种情况该做的决定不同。
-    （这一处曾是交接审计里**最后一处**静默截断。）
-    """
+    """未知消息类型的兜底。切了必须标，否则读的人分不清"它就这么多"和"被切了"。"""
     content = str(m.get("content") or "")
     n += 1
     return [
@@ -759,15 +664,9 @@ def _render_unknown(m: dict, n: int) -> tuple[list[str], int]:
 
 
 def _render_messages(turn: dict) -> list[str]:
-    """把本轮消息渲染成**带来源与类型**的记录。
+    """把本轮消息渲染成带来源与类型的记录。
 
-    用户要求：*"哪些是推理 哪些是正文 是哪个在推理 哪个在输出也不知道
-    哪些是提问 来源是哪里 哪些是用户输入"* —— 所以每条都要能看出
-    **谁说的（来源）+ 说的是什么性质（类型）**，不能只丢一个 `AIMessage` 类型名。
-
-    ⚠️ **它自己只做分发**：四种消息各有一个渲染器
-    （`_render_ai` / `_render_tool` / `_render_system` / `_render_unknown`），
-    配对状态在 `_ToolPairing` 里。原来是一个 118 行的函数，三样缠在一起。
+    每条都要能看出谁说的和什么性质。它只做分发，配对状态在 `_ToolPairing` 里。
     """
     out: list[str] = []
     pairing = _ToolPairing()
@@ -789,7 +688,7 @@ def _render_messages(turn: dict) -> list[str]:
 
 
 def _turn_header(turns: list[dict], i: int, t: dict) -> list[str]:
-    """一轮的**头**：标题 ＋ 那行"几件事" ＋ 用户输入 ＋ 上下文读数（超线加告警）。"""
+    """一轮的头：标题、那行"几件事"、用户输入、上下文读数（超线加告警）。"""
     lines = [
         f"## 第 {t['turn']} 轮",
         "",
@@ -811,12 +710,12 @@ def _turn_header(turns: list[dict], i: int, t: dict) -> list[str]:
 
 
 def _task_table(tasks: list[dict]) -> list[str]:
-    """**Task 台账** —— 一张表 ＋ 每个 Task 的原话（`<details>` 里给全文）。"""
+    """Task 台账：一张表，加每个 Task 的原话（`<details>` 里给全文）。"""
     lines = [
         "### Task 台账",
         "",
-        # ⚠️ 判定退休后原来那列「进度 / 还缺」没有来源了，整列删掉；
-        #    执行器的原话在下面每个 Task 的 `<details>` 里有**全文**。
+        # "进度 / 还缺"那列在判定退休后没有来源了，整列删掉；
+        # 执行器的原话在下面每个 Task 的 `<details>` 里有全文。
         "| Task | 技能 | 状态 | **产出** | **输入引用** |",
         "|---|---|---|---|---|",
     ]
@@ -841,14 +740,9 @@ def _task_table(tasks: list[dict]) -> list[str]:
 
 
 def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None:
-    """落盘**运行全记录**（一个 run 就这一份）—— 人工审计"过程对不对、交接了什么"。
+    """落盘运行全记录（一个 run 一份），人工审计"过程对不对、交接了什么"。
 
-    用户要求：*"不能遗漏任何关键分支 软硬判断尤为关键
-    信息交接的地方 交接了什么也很关键 用户输入 ai输出 工具调用 诸如此类"*、
-    *"日志你为啥要搞几个 放一起可以不"*。
-
-    结构（后续由父进程追加）：① 概览 → ② 运行全记录（按轮）→ ③ 软判断留档
-    → ④ 原始 trace 附录（各自追加）。
+    结构：概览 → 运行全记录（按轮）→ 软判断留档 → 原始 trace 附录，后两段由父进程追加。
     """
     d = out_dir / "artifacts" / f"{case_id}__r{rep}"
     d.mkdir(parents=True, exist_ok=True)
@@ -868,7 +762,7 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
         # ── 本轮全部消息，按发生顺序（用户输入 / 平台注入 / AI 输出 / 工具调用与返回）──
         lines += ["### 本轮消息（按发生顺序）", ""]
         lines += _render_messages(t)
-        # 🔴 平台日志 —— 机制是否生效的直接证据（投递 / 透传 / 取代 / 注入 / 工具）
+        # 平台日志：机制是否生效的直接证据（投递 / 透传 / 取代 / 注入 / 工具）
         if t.get("log"):
             lines += ["### 平台日志", "", "```"] + [f"  {x}" for x in t["log"]] + ["```", ""]
         if t["tasks"]:
@@ -880,12 +774,9 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
 
 
 def append_trace(result: dict, tag: str) -> None:
-    """把该 run 的**原始 trace** 作为附录并进它自己的 `_run.md`（一份文件读完）。
+    """把该 run 的原始 trace 作为附录并进它自己的 `_run.md`，一份文件读完。
 
-    顺序：概览 → 逐轮全记录（子进程写）→ 软判断留档 → 本附录。
-
-    ⚠️ 它是**渲染运行记录**的活儿，和 `dump_run_record` 是一件事，交互式入口也要用 ——
-    所以住在这儿，**不许**让交互式入口反过来 import 跑批模块（那是"产品依赖测试"）。
+    它和 `dump_run_record` 是一件事，交互式入口也要用，所以住在这儿。
     """
     src = result.get("trace_log")
     if not src or not Path(src).exists():
@@ -897,7 +788,7 @@ def append_trace(result: dict, tag: str) -> None:
             "\n\n## 附录 · 原始 trace\n\n"
             "执行器每一轮、被推回去时的提示词、判定逐条理由、以及软判断的逐字 "
             "prompt/response，都在这里。\n\n"
-            "````\n"  # ⚠️ 四个反引号：内容里本身就有 ``` （技能指令、产物正文）
+            "````\n"  # 四个反引号：内容里本身就有 ``` （技能指令、产物正文）
         )
         fh.write(Path(src).read_text(encoding="utf-8", errors="replace"))
         fh.write("\n````\n")
