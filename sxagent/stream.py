@@ -66,10 +66,10 @@ async def _stream_with_retry(graph, state, config, who: str, role: str):
             # 走 `trace.note()` 而不直调 `_publish`：直调并写死 kind 会绕过 `_check_kind`，
             # 改名 / 打错时校验抓不到。
             trace.note(f"⚠️ {who} 这一轮**基础设施抖动**（{type(e).__name__}: {e}）"
-                 "—— 已重试一次（上面流出去的那半段作废）", kind="retry")
+                 "—— 这就重试一次（上面流出去的那半段作废）", kind="retry")
 
 
-#: 写产物的进度。模型写产物时吐的是工具调用参数，`_chunk_text` 只认 content，那几分钟
+#: 写产物的进度。模型写产物时输出的是工具调用参数，`_chunk_text` 只认 content，那几分钟
 #: 一个字都上不了屏，所以这里按参数累计字数报进度。不点名工具：小工具几十字不报，
 #: `write_artifact` 一写几千字会报。
 _WRITE_REPORT_AT = 200        # 参数超过这么多字才开始报
@@ -157,7 +157,14 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                 if cid:
                     cur_id = cid
 
-                # 工具参数的增量也要数：模型写产物时吐的是参数、content 是空的，
+                # 模型从"说话"转成"调工具"了：先把缓冲区里那句落盘。不落的话它会一直躺在
+                # `buf` 里，直到整条流结束 —— 而工具是在那之前跑完的（执行器那 60–120 秒
+                # 就夹在中间），读日志的人会先看见执行器干活、后看见主 agent 说要去委派，
+                # 因果正好反了。判断用结构信号（这一片 chunk 带工具参数），不看正文内容。
+                if getattr(chunk, "tool_call_chunks", None):
+                    flush_line(buf)
+                    buf = ""
+                # 工具参数的增量也要数：模型写产物时输出的是参数、content 是空的，
                 # 不数就那几分钟全静音。
                 _nm, _n = _tool_arg_delta(chunk)
                 if _nm:
