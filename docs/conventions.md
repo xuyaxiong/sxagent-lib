@@ -124,9 +124,16 @@ token、密码、隐私数据不许写进任何日志或产物。
 
 - pytest 加 pytest-asyncio。
 - 一个测试只验证一个行为，函数名说清验证的是什么。
-- 外部服务必须 Mock。
+- 目录镜像源码：`sxagent/handoff/briefing.py` 的测试放 `tests/sxagent/handoff/test_briefing.py`。
+  镜像出来的每一层放 `__init__.py`（或保证文件名全局唯一），否则 pytest 会报 import file
+  mismatch，而且报得晚。
+- 单元测试不碰真模型、真数据库，外部服务一律 Mock：代码里已经留好了打桩点（`executor.run_task`
+  是模块属性、`trace.install_recorder` 是槽位、`session` 是 contextvar），别为测试往产品代码里
+  加钩子。真模型那层是跑批和真会话，不是单测的事。
+- 断言要强：断对象、断事件、断异常，不断渲染出来的文本。要断文本就断整段相等，不许
+  `assert "关键词" in out`，不许正则 —— 见判据零。
 - 测试要能重复跑，不依赖执行顺序。
-- 文件放 `tests/`，命名 `test_<模块名>.py`。
+- 一个函数很难单独测，先别急着写测试：多半是职责过大，或者缺一个可替换点。
 
 测试还没建，这几条是建的时候照着来的。
 

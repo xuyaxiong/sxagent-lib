@@ -1,8 +1,19 @@
 # CLAUDE.md
 
-这份文件每次会话都会进上下文，所以只放动手前必须过一遍的判据。完整的叙述在 `docs/`：
-`architecture.md` 讲现在长什么样，`decisions.md` 讲为什么这么选，`evolution.md` 讲往哪走，
-`principles.md` 是下面这些判据的完整版，`conventions.md` 是提交、分支、编码规范。
+这份文件是文档体系的入口，每次会话都会进上下文，所以只放动手前必须过一遍的判据 —— 正文在
+`docs/`，按需取。要查什么，按下表去读对应那份，不要猜：
+
+| 要查什么 | 读哪份 |
+|---|---|
+| 现在长什么样：每个文件管什么、一次 `invoke` 的时序、状态机 | `docs/architecture.md` |
+| 当初为什么这么选、砍掉了什么、哪几条是实测换来的 | `docs/decisions.md` |
+| 已知欠账、往哪走、为什么换模型必须重新做端到端验证 | `docs/evolution.md` |
+| 下面这些判据的完整版与"为什么" | `docs/principles.md` |
+| 提交、分支、编码、测试的规范 | `docs/conventions.md` |
+| 改过什么、当时踩了什么 | git log |
+
+要动的是链路形状或状态机，先读 `architecture.md`；要推翻某条设计，先读 `decisions.md` 里它
+当初为什么那么定。判据没覆盖到的地方，一律先去查，不要凭经验补一个看起来合理的答案。
 
 ## 零、判断不进正则
 
@@ -110,7 +121,7 @@ AST 是否相同、字符串有没有变、文件在不在、行数多少，这�
 - 单轮冒烟：`uv run python -m sxagent --say "你好"`
 - 打包：`uv run python build_cli.py`，产物在 `dist/sxagent/`。发出去之前必须在一台没装 Python 的
   机器上真跑一遍
-- 测试：暂时没有，还没建。素材是旧仓库的 16 个单测
+- 测试：暂时没有，还没建。建的时候照 `docs/conventions.md` 的「测试」小节来
 - lint：`uv run ruff check .`，配置在 `pyproject.toml`，存量还没清
 - 改完文本验收：`uv run python scripts/text_audit.py`，报的是"代码和字符串有没有被顺手碰"，
   只报事实，不管风格
