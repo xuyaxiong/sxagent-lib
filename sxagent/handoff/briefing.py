@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from sxagent import artifacts as artifacts_mod
 from sxagent import trace
@@ -51,7 +51,8 @@ class QA(TypedDict):
     的孤儿。`q` 取 `asked`（`ask_user` 的原话）不取 `report`；取不到存空串，渲染时明说。
     """
 
-    by: str  # "用户" | "主 agent"
+    #: 谁答的。取值就这两个 —— 收成枚举，不靠注释约定。
+    by: Literal["用户", "主 agent"]
     q: str  # 执行器问的原话（`ask_user` 的参数 —— 取不到时是空串，不是 `report`）
     a: str  # 答复
 
@@ -84,7 +85,7 @@ class Task(TypedDict, total=False):
     #: 这个 Task 最近一次运行是谁起的 —— `"delegate"`（主 agent 派发）或
     #: `"feed"`（用户答复后平台投递重跑）。台账截断时要说清"全文在哪"，而两条路的答案
     #: 不一样（投递那条路没有回执）—— 指错会让主 agent 翻到上一轮的回执。
-    run_by: str  # "delegate" | "feed"
+    run_by: Literal["delegate", "feed"]
 
 
 # ──────────────────────────── 渲染：注入前那一瞬才拼 ────────────────────────────
