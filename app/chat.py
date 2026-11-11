@@ -45,7 +45,6 @@ from sxagent import artifacts as artifacts_mod  # noqa: E402 —— artifacts �
 from sxagent.config import describe  # noqa: E402
 from sxagent.graph import build, next_pending  # noqa: E402
 from sxagent.handoff.briefing import asked_text  # noqa: E402
-from sxagent.registry import registry  # noqa: E402
 
 # 路径一律从 `app.runtime` 取（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`），本文件不自己算：
 # 打包后自己算会落到解包目录，和程序旁边那个目录对不上。
@@ -650,7 +649,7 @@ def _banner(s: _Session, seed_note: str) -> None:
     # 标题与技能清单之间也隔一条线，扫一眼能分出"这是谁"和"有什么"。
     print(BAR)
     print("技能清单")
-    _print_skills(registry.values(), indent="   ")
+    _print_skills(s.inst["skills"].values(), indent="   ")
     print(BAR)
     print(f"日志   {recorder.log_file()}")
     print(f"记录   {s.out_dir}")
@@ -668,7 +667,14 @@ def _absorb(
 
     `answer_to`：这一句是在答哪一条待答（主循环那条为空）。
     """
-    snap = snapshot(state, text, s.seen_len, len(s.turns) + 1, round(time.time() - t, 1))
+    snap = snapshot(
+        state,
+        text,
+        s.seen_len,
+        len(s.turns) + 1,
+        round(time.time() - t, 1),
+        skills=s.inst["skills"],
+    )
     snap["input_source"] = "human"  # 用户当场打的，不是脚本预置
     if answer_to:
         snap["answer_to"] = answer_to  # 记录层如实标这句在答哪一条
@@ -793,7 +799,7 @@ def _finish(s: _Session) -> None:
         "turns_done": len(s.turns),
         "turn_errors": s.turn_errors,
         "usage": s.inst["counter"].snapshot(),
-        "artifact_writes": s.inst["writes"],
+        "artifact_writes": s.inst["store"].writes,
         "run_tasks": s.inst["run_tasks"],
         "artifact_ids": artifacts_mod.ids(),
         "artifact_final": {
@@ -841,7 +847,8 @@ def main() -> None:
     inst = install(
         {"skills_dir": args.skills, "skills_mode": "replace", "exec_path": args.exec_path}
     )
-    graph = build()
+    # 技能来源与产物库由 `install()` 造好、注入进来：库那两处不认全局表。
+    graph = build(artifacts=inst["store"], skills=inst["skills"])
     config = {"configurable": {"thread_id": args.thread}}
     session.use(args.thread)  # 进程就是一次会话：thread_id 进事件、日志带标识
 

@@ -11,11 +11,35 @@ from __future__ import annotations
 import asyncio
 
 from sxagent import artifacts
+from sxagent.artifacts import MemoryArtifacts
 from sxagent.executor import run_task
 from sxagent.skills import Skill
 from tests.fakes import ToolCallingFakeModel
 
 MARKER_A, MARKER_B = "哨兵-A", "哨兵-B"
+
+
+class _SpyStore(MemoryArtifacts):
+    """记下谁往它里写了 —— 断"注入的产物库真被用上"。"""
+
+    def __init__(self) -> None:
+        self.puts: list[str] = []
+
+    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+        self.puts.append(aid)
+        super().put(aid, title, summary, file_type, content)
+
+
+async def test_executor_writes_into_the_injected_store(monkeypatch) -> None:
+    """执行器交付的产物也要落进注入的那个库（这条走的是 `run_task` 的注入）。"""
+    fake = ToolCallingFakeModel()
+    monkeypatch.setattr("sxagent.executor.get_model", lambda *a, **k: fake)
+    spy = _SpyStore()
+
+    outcome = await run_task(_skill("skill-a", MARKER_A), "交接书", artifacts=spy)
+
+    assert spy.puts == ["art_001"]
+    assert outcome.artifacts == ["art_001"]
 
 
 def _skill(name: str, marker: str) -> Skill:

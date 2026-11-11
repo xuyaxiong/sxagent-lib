@@ -19,11 +19,41 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from sxagent import artifacts, graph
+from sxagent.artifacts import MemoryArtifacts
+from sxagent.executor import ExecOutcome
+from sxagent.skill_pack import LocalSkills
+from sxagent.skills import Skill
 from tests.fakes import ToolCallingFakeModel
 
 
 class _MarkerSaver(InMemorySaver):
     """自己的 saver —— 能认出"图用的是不是这个实例"。"""
+
+
+class _SpyStore(MemoryArtifacts):
+    """记下谁往它里写了 —— 断"注入的产物库真被用上"（传默认实现等于没验）。"""
+
+    def __init__(self) -> None:
+        self.puts: list[str] = []
+
+    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+        self.puts.append(aid)
+        super().put(aid, title, summary, file_type, content)
+
+
+async def test_injected_artifact_store_is_actually_used(monkeypatch) -> None:
+    """主 agent 写的产物要落进注入的那个库 —— 落回默认库就等于没注入。"""
+    fake = ToolCallingFakeModel()
+    monkeypatch.setattr("sxagent.agent.get_model", lambda *a, **k: fake)
+    spy = _SpyStore()
+
+    app = graph.build(artifacts=spy)
+    await app.ainvoke(
+        {"messages": [HumanMessage("哨兵-A 的问题")]},
+        {"configurable": {"thread_id": "test-inject-store"}},
+    )
+
+    assert spy.puts == ["art_001"]
 
 
 def test_injected_checkpointer_and_store_reach_the_graph() -> None:
@@ -32,6 +62,53 @@ def test_injected_checkpointer_and_store_reach_the_graph() -> None:
     app = graph.build(checkpointer=saver, store=store)
     assert app.checkpointer is saver
     assert app.store is store
+
+
+def test_the_injected_skill_source_reaches_the_agent(monkeypatch) -> None:
+    """技能来源要真的到装配那一层 —— 装配的缝上收下参数、`is` 一比就知道有没有被丢掉。"""
+    seen: dict[str, object] = {}
+
+    def fake_build_agent(schema, **kw):
+        seen.update(kw)
+        return _FakeAgent()
+
+    monkeypatch.setattr("sxagent.graph.build_agent", fake_build_agent)
+    source = LocalSkills({"哨兵技能": Skill("哨兵技能", "一句话", "哨兵指令")})
+
+    graph.build(skills=source)
+
+    assert seen["skills"] is source
+
+
+async def test_the_feed_path_uses_the_injected_store_and_source(monkeypatch) -> None:
+    """投递那条路也要走注入：查技能按注入的来源，产物落进注入的库。
+
+    两个都得断 —— 少穿一个参数，用户答复后的那次重跑就会写进库自带的产物库、按库自带的
+    技能表查技能，而这条路上没有任何报错。
+    """
+    seen: dict[str, object] = {}
+
+    async def fake_run_task(skill, briefing="", user_turns=None, **kw):
+        seen["skill"] = skill.name
+        seen.update(kw)
+        return ExecOutcome(status="completed")
+
+    monkeypatch.setattr("sxagent.executor.run_task", fake_run_task)
+    store = _SpyStore()
+    source = LocalSkills({"哨兵技能": Skill("哨兵技能", "一句话", "哨兵指令")})
+    node = graph._make_node_feed(store, source)
+
+    await node(
+        {
+            "messages": [HumanMessage("这是答复")],
+            "answer_to": "t1",
+            "tasks": [{"id": "t1", "skill": "哨兵技能", "stage": "waiting_for_input"}],
+        }
+    )
+
+    assert seen["skill"] == "哨兵技能"  # 技能是照注入的来源查出来的
+    assert seen["artifacts"] is store
+    assert seen["skills"] is source
 
 
 class _FakeAgent:
@@ -47,7 +124,9 @@ class _FakeAgent:
 
 
 async def test_full_state_update_keeps_messages_whole(monkeypatch) -> None:
-    monkeypatch.setattr("sxagent.graph.build_agent", lambda schema, tools=(): _FakeAgent())
+    monkeypatch.setattr(
+        "sxagent.graph.build_agent", lambda schema, **kw: _FakeAgent()
+    )  # 装配的缝变了，假工厂跟着改
     app = graph.build()
     config = {"configurable": {"thread_id": "test-graph"}}
 

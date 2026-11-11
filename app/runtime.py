@@ -2,9 +2,9 @@
 
     from app.runtime import install, snapshot, dump_run_record
 
-装什么：把技能读进 `sxagent.registry`；再给 `store_artifact` / `run_task` / 模型调用各包一层
-记录器，记产物流水、执行器流水、token 计数。录什么：`snapshot()` 抓一轮全量快照，
-`dump_artifacts()` / `dump_run_record()` 落成逐轮全记录加原始 trace 附录。
+装什么：从文件夹装技能（造一个 `SkillSource`）、给产物库和执行器各包一层记录器，记产物流水、
+执行器流水、token 计数；产物库与技能来源走**注入**交给 `build()`。录什么：`snapshot()` 抓一轮
+全量快照，`dump_artifacts()` / `dump_run_record()` 落成逐轮全记录加原始 trace 附录。
 
 两个入口必须共用这一层，因为要产出同一种记录格式：交互式入口就是把预置 turns 换成人当场打
 的字，格式不一致，收回来的一堆 run 就没法比。故障注入不在这里，那是纯测试旋钮。"""
@@ -22,8 +22,8 @@ from langchain_core.messages import AIMessage, BaseMessage
 
 from sxagent import config as sxagent_config
 from sxagent.config import app_root
-from sxagent.registry import registry
-from sxagent.skill_pack import ENTRY_NAME
+from sxagent.skill_pack import DEFAULT_SOURCE, ENTRY_NAME, LocalSkills
+from sxagent.skills import Skill, SkillSource, builtin_skills, render_catalog
 
 # ──────────────────────────── token / 调用计数 ────────────────────────────
 
@@ -104,7 +104,7 @@ def ensure_app_dirs() -> list[str]:
 # ──────────────────────────── 技能加载 ────────────────────────────
 
 
-def _load_skills_dir(path_str: str) -> dict[str, object]:
+def _load_skills_dir(path_str: str) -> LocalSkills:
     """从目录装技能包（相对路径按仓库根解析，子进程 cwd 变了也不受影响）。
 
     格式解析在 `sxagent.skill_pack`，这里只把路径定到仓库根。
@@ -116,66 +116,65 @@ def _load_skills_dir(path_str: str) -> dict[str, object]:
     root = Path(path_str)
     if not root.is_absolute():
         root = ROOT / root
-    skills, warn = load_skills_dir(root)
+    source, warn = load_skills_dir(root)
     for w in warn:
         trace.note(f"技能加载：{w}")
-    return skills
+    return source
 
 
 # ──────────────────────────── 装配 ────────────────────────────
 
 
-def _install_skills(case: dict[str, object]) -> None:
-    """技能集：从 `case.skills_dir` 读目录或从 `case.skills` 内联，换进注册表。
+def _skills_source(case: dict[str, object]) -> SkillSource:
+    """技能来源：从 `case.skills_dir` 读目录或从 `case.skills` 内联，现造一个来源实例。
 
-    先 `reset()` 再叠加，`extra` 为空时也要 reset，同进程多 case 才不会串味。
+    `skills_mode` 是 `replace` 就只用 case 给的那些，是 `extend`（默认）就在内置表上合并。
+    每个 case 现造一份，不碰任何全局 —— 换一批技能就是换一个来源实例。
     """
-    import sxagent.skill_pack
-    import sxagent.skills
-
-    registry.testing.reset()
-    # 技能包目录表也要清：它不归注册表管，不清会残留上一个 case 的包目录
-    sxagent.skill_pack.clear()
-    extra: dict[str, object] = {}
+    skills: dict[str, Skill] = {}
+    pack_dirs: dict[str, Path] = {}
     if case.get("skills_dir"):
-        extra.update(_load_skills_dir(str(case["skills_dir"])))
+        source = _load_skills_dir(str(case["skills_dir"]))
+        skills.update(source.skills)
+        pack_dirs.update(source.pack_dirs)
     if case.get("skills"):
-        extra.update({s["name"]: sxagent.skills.Skill(**s) for s in case["skills"]})
-    if extra:
-        if case.get("skills_mode", "extend") == "replace":
-            registry.testing.replace(extra)
-        else:
-            registry.testing.extend(extra)
+        # case 里内联的技能就是 `Skill` 的三个字段，原样构造（`skills.py` 是那份 schema 的家）
+        skills.update({str(s["name"]): Skill(**s) for s in case["skills"]})
+    if not skills:
+        return DEFAULT_SOURCE
+    if case.get("skills_mode", "extend") == "replace":
+        return LocalSkills(skills, pack_dirs)
+    return LocalSkills({**builtin_skills(), **skills}, pack_dirs)
 
 
-def _record_artifacts() -> list[dict[str, object]]:
-    """产物写入流水：记谁在什么时候写了什么，用来判并发与归属。
+def _recording_store():
+    """产物库的观测层：谁在什么时候写了什么，用来判并发与归属。
 
-    签名要跟着 `sxagent.artifacts.store_artifact` 走，漏改就是整轮 `TypeError`。
+    走接口注入（`build(artifacts=…)`），不打桩模块函数 —— 换一个产物库（OSS），这套记录照样
+    挂得上。类在函数里现造：本模块也被不该产生日志的地方导入（见模块头），而
+    `sxagent.artifacts` 一 import 就把 `trace` 带了进来。
     """
-    import sxagent.artifacts
+    from sxagent.artifacts import MemoryArtifacts
 
-    writes: list[dict[str, object]] = []
-    orig_store = sxagent.artifacts.store_artifact
+    class RecordingStore(MemoryArtifacts):
+        def __init__(self) -> None:
+            self.writes: list[dict[str, object]] = []
 
-    def rec_store(title: str, summary: str, file_type: str, content: str) -> str:
-        aid = orig_store(title, summary, file_type, content)
-        writes.append(
-            {
-                "aid": aid,
-                "title": title,
-                "summary": summary,
-                "type": file_type,
-                "chars": len(content),
-                "thread": threading.get_ident(),
-                "t": round(time.time(), 3),
-            }
-        )
-        return aid
+        def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+            super().put(aid, title, summary, file_type, content)
+            self.writes.append(
+                {
+                    "aid": aid,
+                    "title": title,
+                    "summary": summary,
+                    "type": file_type,
+                    "chars": len(content),
+                    "thread": threading.get_ident(),
+                    "t": round(time.time(), 3),
+                }
+            )
 
-    # `write_artifact` 的工具体在 `artifacts.py` 里按模块全局找 `store_artifact`，所以这里改得到
-    sxagent.artifacts.store_artifact = rec_store
-    return writes
+    return RecordingStore()
 
 
 def _record_run_tasks() -> list[dict[str, object]]:
@@ -189,11 +188,12 @@ def _record_run_tasks() -> list[dict[str, object]]:
     run_tasks: list[dict[str, object]] = []
     orig_run_task = sxagent.executor.run_task
 
-    async def rec_run_task(skill, briefing: str = "", user_turns=None):
+    async def rec_run_task(skill, briefing: str = "", user_turns=None, **kw):
         # 前后产物库的差集 = 这次真写出来的。不能按线程归属：产物写入发生在 langgraph 的
-        # 工具线程里，和 run_task 的线程对不上。签名跟着 `executor.run_task` 走。
+        # 工具线程里，和 run_task 的线程对不上。签名跟着 `executor.run_task` 走：它新增的
+        # 注入参数（`artifacts` / `skills`）原样转过去，不在这里再列一遍。
         before = set(sxagent.artifacts.ids())
-        out = await orig_run_task(skill, briefing, user_turns)
+        out = await orig_run_task(skill, briefing, user_turns, **kw)
         run_tasks.append(
             {
                 "thread": threading.get_ident(),
@@ -230,16 +230,19 @@ def _count_tokens() -> UsageCounter:
 
 
 def install(case: dict[str, object]) -> dict[str, object]:
-    """装好全部观测与注入，必须在 `build()` 之前调用。"""
-    import sxagent.agent
-    import sxagent.artifacts
+    """装好全部观测与注入，必须在 `build()` 之前调用。
 
-    # ① 产物库清空 —— 全局 dict，不清就会带上上一轮
-    sxagent.artifacts.clear()
-    # ② 技能集
-    _install_skills(case)
-    # ③ / ③′ 两处打桩：产物写入流水、执行器调用流水
-    writes = _record_artifacts()
+    返回里的 `store` 与 `skills` 要原样交给 `build()` —— 库那两处只认注入进来的东西。
+    """
+    import sxagent.agent
+
+    # ① 产物库：观测层走接口注入，现造一个。产物挂在会话上，所以要显式清 —— 不清会带上
+    #    上一个 case 的。
+    store = _recording_store()
+    store.clear()
+    # ② 技能来源：每个 case 现造一份，不碰全局
+    skills = _skills_source(case)
+    # ③ 执行器调用流水（打桩在 `executor.run_task` 上：两条路都汇到 `agent.dispatch`）
     run_tasks = _record_run_tasks()
     # ④ 执行路径开关（case 可选），默认 auto（两条路都开）。想验执行器的正文交付就得让
     # 委派真的发生，靠碰运气压路径的断言必然脆。见 `sxagent/agent.EXEC_PATH`。
@@ -251,7 +254,8 @@ def install(case: dict[str, object]) -> dict[str, object]:
     #    dict 里写就行（同一个对象，运行记录照旧带着它们），目前还没有调用方。
     return {
         "counter": counter,
-        "writes": writes,
+        "store": store,
+        "skills": skills,
         "run_tasks": run_tasks,
         "fault": {"left": 0, "fired": 0},
         "stream_fault": {"left": 0, "fired": 0},
@@ -297,15 +301,17 @@ def _last_ai_text(state: dict[str, object]) -> str:
     return ""
 
 
-def _sys_prompt_chars() -> int:
+def _sys_prompt_chars(skills: SkillSource = DEFAULT_SOURCE) -> int:
     """主 agent 的 system prompt 体积。
 
     它不在 `state["messages"]` 里，`main_ctx_chars` 量不到；真实上下文是两者之和。
     """
     import sxagent.agent
 
-    # 口径必须与 `agent.build_agent` 拼的那份一致，所以两边都调 `registry.catalog()`。
-    return len(sxagent.agent._MAIN_PROMPT) + len("\n\n可用技能：\n" + registry.catalog())
+    # 口径必须与 `agent.build_agent` 拼的那份一致，所以两边都调 `render_catalog()`。
+    return len(sxagent.agent._MAIN_PROMPT) + len(
+        "\n\n可用技能：\n" + render_catalog(skills.values())
+    )
 
 
 def _msg_record(m) -> dict[str, object]:
@@ -329,7 +335,12 @@ def _msg_record(m) -> dict[str, object]:
 
 
 def snapshot(
-    state: dict[str, object], user: str, prev_len: int, idx: int, wall_s: float
+    state: dict[str, object],
+    user: str,
+    prev_len: int,
+    idx: int,
+    wall_s: float,
+    skills: SkillSource = DEFAULT_SOURCE,
 ) -> dict[str, object]:
     from sxagent import artifacts, trace
 
@@ -352,7 +363,7 @@ def snapshot(
         "reply": _last_ai_text(state),
         "tasks": state.get("tasks") or [],
         "main_ctx_chars": _ctx_chars(msgs),
-        "sys_prompt_chars": _sys_prompt_chars(),
+        "sys_prompt_chars": _sys_prompt_chars(skills),
         "artifacts_chars": artifacts.chars(),
         "artifacts": {k: len(v["content"]) for k, v in artifacts.items()},
         "delegate_calls": delegates,

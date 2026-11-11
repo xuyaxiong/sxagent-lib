@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from sxagent import artifacts as artifacts_mod
 from sxagent import trace
+from sxagent.artifacts import DEFAULT_STORE, ArtifactStore
 from sxagent.handoff import (
     BODY,
     FaultKind,
@@ -150,11 +150,11 @@ def turn_lines(turns: list[Turn]) -> list[str]:
     return out
 
 
-def _index(aids: list[str]) -> list[str]:
+def _index(aids: list[str], store: ArtifactStore) -> list[str]:
     """产物 ID 列表 → 清单行（含缺失）。有 ID 而取不到是异常，要显式写出来。"""
     out: list[str] = []
     for aid in aids:
-        a = artifacts_mod.get(aid)
+        a = store.get(aid)
         if not a:
             out.append(f"- {aid}（**产物库里没有这一条**）")
             continue
@@ -165,7 +165,7 @@ def _index(aids: list[str]) -> list[str]:
     return out
 
 
-def _index_block(hop: str, aids: list[str], tail: str) -> str | None:
+def _index_block(hop: str, aids: list[str], tail: str, store: ArtifactStore) -> str | None:
     """一个产物清单段（已产出 / 可读），清单空就不渲染这一块。两段形状一样，只这一处拼。"""
     ids = [a for a in aids if a]
     if not ids:
@@ -173,7 +173,7 @@ def _index_block(hop: str, aids: list[str], tail: str) -> str | None:
     return "\n".join(
         [
             *section_head(hop),
-            *[f"{BODY}{x}" for x in _index(ids)],
+            *[f"{BODY}{x}" for x in _index(ids, store)],
             f"{BODY}{tail}",
         ]
     )
@@ -269,7 +269,7 @@ def _block_resume(task: Task) -> str | None:
     )
 
 
-def render_briefing(task: Task) -> str:
+def render_briefing(task: Task, store: ArtifactStore = DEFAULT_STORE) -> str:
     """把 Task 渲染成执行器的输入，所有重入路径的唯一入口。
 
     它是整份交接而不是增量。渲染出来的就是全部：没有"给人看的另一份"，日志里 INJECT
@@ -283,11 +283,13 @@ def render_briefing(task: Task) -> str:
             "already_produced",
             task.get("artifacts") or [],
             "（这次要**在它基础上补全**，提交完整版；不要从零重写。）",
+            store,
         ),
         _index_block(
             "readable",
             task.get("refs") or [],
             "（这是清单，不是正文。要用哪一份就用 read_artifact 读全文，不要凭标题猜。）",
+            store,
         ),
         _block_resume(task),
     ]

@@ -42,13 +42,14 @@ from sxagent.agent import (
     build_agent,
     dispatch,  # 派发编排（两条路共用）
 )
+from sxagent.artifacts import DEFAULT_STORE, ArtifactStore
 from sxagent.handoff import render_hop  # 唯一那条渲染路（见 handoff/__init__）
 from sxagent.handoff.briefing import Task, asked_text
 from sxagent.handoff.ledger import render_ledger
 
 # 本模块不直接调执行器：走 `agent.dispatch`，那边用属性访问 `executor.run_task`（晚绑定）。
-from sxagent.registry import registry  # 技能注册表（唯一持有者）
-from sxagent.skills import Skill  # 技能领域
+from sxagent.skill_pack import DEFAULT_SOURCE  # 技能来源：库自带的默认实现
+from sxagent.skills import Skill, SkillSource  # 技能领域 ＋ 来源接口
 
 
 def _merge_tasks(old: list[Task] | None, new: list[Task] | None) -> list[Task]:
@@ -105,7 +106,12 @@ def _last_human(state: State) -> str:
 
 
 async def _deliver(
-    state: State, t: Task, skill: Skill, user: str
+    state: State,
+    t: Task,
+    skill: Skill,
+    user: str,
+    artifacts: ArtifactStore,
+    skills: SkillSource,
 ) -> tuple[Task, list[str], list[Task]]:
     """投一条待答。返回投递后的 Task、一行日志，以及被取代的旧 Task。
 
@@ -134,6 +140,8 @@ async def _deliver(
         state.get("tasks") or [],
         trigger="feed",
         messages=state.get("messages") or [],
+        artifacts=artifacts,
+        skills=skills,
     )
     logs: list[str] = []
     if answer:
@@ -152,7 +160,9 @@ async def _deliver(
     return rec, logs, mooted
 
 
-async def _feed_waiting(state: State) -> tuple[list[Task], list[str]]:
+async def _feed_waiting(
+    state: State, artifacts: ArtifactStore, skills: SkillSource
+) -> tuple[list[Task], list[str]]:
     """把用户这条消息的原话投给它标明的那一个待答任务（`answer_to`）。
 
     不做任何判断——平台不替用户判断他的话算不算回答，那是语义判断，判错比多问一遍更糟。
@@ -174,41 +184,55 @@ async def _feed_waiting(state: State) -> tuple[list[Task], list[str]]:
     out: list[Task] = []
     logs = [f"feed: 定向投递 → {target}（`answer_to` 指的那条；其余待答不动）"]
     for t in waiting:
-        skill = registry.get(t["skill"])
+        skill = skills.get(t["skill"])
         if skill is None:
             logs.append(f"feed: ⚠️ {t['id']} 的技能「{t['skill']}」不存在，跳过")
             continue
-        rec, more, mooted = await _deliver(state, t, skill, user)
+        rec, more, mooted = await _deliver(state, t, skill, user, artifacts, skills)
         logs += more
         out.extend(mooted)
         out.append(rec)
     return out, logs
 
 
-async def node_feed(state: State) -> dict[str, object]:
-    """① 把用户原话投给它标明的那一个待答任务，见 `_feed_waiting`。
+def _make_node_feed(artifacts: ArtifactStore, skills: SkillSource):
+    """造 `feed` 那个节点：投递要按注入的技能来源查技能、按注入的产物库渲染交接书。"""
 
-    只有一条返回路径：`answer_to` / `fed_asking` 是本轮信号，多一条路就多一处可漏。
-    """
-    updated, logs = await _feed_waiting(state)
+    async def node_feed(state: State) -> dict[str, object]:
+        """① 把用户原话投给它标明的那一个待答任务，见 `_feed_waiting`。
 
-    # 投递之后执行器又问了吗 —— 判据是结构事实：投递过的那条落成了 `waiting_for_input`。
-    fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
+        只有一条返回路径：`answer_to` / `fed_asking` 是本轮信号，多一条路就多一处可漏。
+        """
+        updated, logs = await _feed_waiting(state, artifacts, skills)
 
-    fed = [t["id"] for t in updated if t.get("run_by") == "feed" and t.get("stage") != "superseded"]
-    actions = (
-        [{"by": "platform.feed", "did": "feed", "tasks": fed, "chars": len(_last_human(state))}]
-        if fed
-        else []
-    )
-    return {
-        "tasks": updated,  # reducer 按 id 合并
-        "log": logs,  # `feed: …` —— reducer 是 operator.add
-        "actions": actions,
-        # 本轮信号必须在这唯一一条返回路径上写回
-        "answer_to": "",
-        "fed_asking": fed_asking,
-    }
+        # 投递之后执行器又问了吗 —— 判据是结构事实：投递过的那条落成了 `waiting_for_input`。
+        fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
+
+        fed = [
+            t["id"] for t in updated if t.get("run_by") == "feed" and t.get("stage") != "superseded"
+        ]
+        actions = (
+            [
+                {
+                    "by": "platform.feed",
+                    "did": "feed",
+                    "tasks": fed,
+                    "chars": len(_last_human(state)),
+                }
+            ]
+            if fed
+            else []
+        )
+        return {
+            "tasks": updated,  # reducer 按 id 合并
+            "log": logs,  # `feed: …` —— reducer 是 operator.add
+            "actions": actions,
+            # 本轮信号必须在这唯一一条返回路径上写回
+            "answer_to": "",
+            "fed_asking": fed_asking,
+        }
+
+    return node_feed
 
 
 async def node_prepare(state: State) -> dict[str, object]:
@@ -369,19 +393,27 @@ def build(
     checkpointer: BaseCheckpointSaver | None = None,
     store: BaseStore | None = None,
     tools: Sequence[BaseTool] = (),
+    artifacts: ArtifactStore = DEFAULT_STORE,
+    skills: SkillSource = DEFAULT_SOURCE,
 ) -> CompiledStateGraph:
     """把父图拼起来 —— 四个节点、一条直线。
 
-    三个注入点都可省：不给 `checkpointer` 就用库自带的内存版（重启即丢，宿主有 Postgres 这类
+    注入点都可省：不给 `checkpointer` 就用库自带的内存版（重启即丢，宿主有 Postgres 这类
     就传进来）；`store` 是长期记忆，先留口子；`tools` 是**宿主的领域工具**，追加进主 agent 的
-    工具表（库那组机制工具始终在，重名当场报错）。
+    工具表（库那组机制工具始终在，重名当场报错）；`artifacts` 是产物库（宿主可能落 OSS）；
+    `skills` 是技能来源（宿主可能从数据库 / OSS 给）。
     """
     g = StateGraph(State)
     # 顺序由边保证：先投递（里面同步跑执行器），后注入台账
-    g.add_node("feed", node_feed)
+    g.add_node("feed", _make_node_feed(artifacts, skills))
     g.add_node("prepare", node_prepare)
     # 主 agent：完整的 agent（工具 + 循环）
-    g.add_node("agent", _make_node_agent(build_agent(AgentState, tools)))
+    g.add_node(
+        "agent",
+        _make_node_agent(
+            build_agent(AgentState, artifacts=artifacts, skills=skills, extra_tools=tools)
+        ),
+    )
     g.add_node("finalize", node_finalize)
     g.add_edge(START, "feed")
     g.add_edge("feed", "prepare")

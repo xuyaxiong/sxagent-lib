@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from sxagent import artifacts as artifacts_mod
+from sxagent.artifacts import DEFAULT_STORE, ArtifactStore
 from sxagent.handoff import (
     DELIVERY,
     DELIVERY_FAULT_REJECTED,
@@ -196,14 +196,14 @@ def _deliver_line(outcome: Outcome, kind: str) -> str:
     return DELIVERY["failed"].format(outcome.rounds)
 
 
-def _produced_block(aids: list[str]) -> str | None:
-    """② 产出的产物：逐条列，带真实路径。缺失的显式写出来，不静默跳过。"""
+def _produced_block(aids: list[str], store: ArtifactStore) -> str | None:
+    """② 产出的产物：逐条列，带真实位置。缺失的显式写出来，不静默跳过。"""
     produced = [a for a in aids if a]
     if not produced:
         return None
     block: list[str] = []
     for aid in produced:
-        a = artifacts_mod.get(aid)
+        a = store.get(aid)
         if not a:
             block.append(f"- {aid}（**产物库里没有这一条**）")
             continue
@@ -212,7 +212,7 @@ def _produced_block(aids: list[str]) -> str | None:
             f"—— {a.get('summary') or '（无梗概）'}"
         )
         if a.get("path"):
-            block.append(f"  文件：{a['path']}")
+            block.append(f"  位置：{a['path']}")
     block.append(
         # 不许写死 ID：用占位形式，和【下一步】那句同一套写法 —— 指到"存在但内容不对"的
         # 出处，比指不到更坏。
@@ -222,7 +222,13 @@ def _produced_block(aids: list[str]) -> str | None:
     return "\n".join(block)
 
 
-def build_receipt(outcome: Outcome, *, agent_answer: str = "", note: str = "") -> Receipt:
+def build_receipt(
+    outcome: Outcome,
+    *,
+    agent_answer: str = "",
+    note: str = "",
+    store: ArtifactStore = DEFAULT_STORE,
+) -> Receipt:
     """执行器的结果 ＋ 处置提示 → 回执对象。各段有条件的写在这里，`HOPS` 声明的是上限。"""
     kind = _kind_of(outcome)
     sections: dict[str, str] = {"deliver": _deliver_line(outcome, kind)}
@@ -240,7 +246,7 @@ def build_receipt(outcome: Outcome, *, agent_answer: str = "", note: str = "") -
         )
 
     # ② 产出的产物
-    produced = _produced_block(outcome.artifacts or [])
+    produced = _produced_block(outcome.artifacts or [], store)
     if produced:
         sections["produced"] = produced
 

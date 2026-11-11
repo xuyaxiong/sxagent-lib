@@ -6,7 +6,7 @@
 
 ## 不变量
 
-1. 对外只给函数，不给 dict（同 `registry`）。表私有，换实现只动这个文件。
+1. 对外只给函数，不给 dict（同 `builtin_skills()`）。表私有，换实现只动这个文件。
 2. 类型靠硬派发，不嗅探内容。认不出来存 `DEFAULT_EXT`，不报错：产物已经做出来了，存不下比
    存错更糟。
 3. 落盘那份和库里那份一字不差，"这是哪一份"由文件名承载（`art_001_<标题>.md`）。
@@ -182,18 +182,17 @@ def use_dir(path: Path | None) -> None:
     session.current().artifact_dir = path
 
 
-def store_artifact(title: str, summary: str, file_type: str, content: str) -> str:
-    """把产物落进产物库，返回产物 ID。顺手落盘（设了落盘目录的话）。
+def _store_into(
+    store: ArtifactStore, title: str, summary: str, file_type: str, content: str
+) -> str:
+    """发号 → 存 → 报一声，返回产物 ID。
 
-    当场落盘：产物是交付物，用户当场就要能打开 —— "已写入产物 art_001"必须指得到文件。
-    发号在这儿、不在实现里：ID 是模型要照着抄的东西，形状得库说了算。
+    发号在这儿、不在实现里：ID 是模型要照着抄的东西，形状得库说了算。落盘那条日志也在这儿
+    ——换一个产物库（OSS），它照样得出现。
     """
     aid = f"art_{next(session.current().artifact_seq):03d}"
-    DEFAULT_STORE.put(aid, title, summary, file_type, content)
-    # 落盘那一刻说一声。写产物是全程最长的一段静默："开始"和"进度"由传输层报，
-    # "结束"必须由这里报 —— 报的是结构事实（ID / 标题 / 字数 / 在哪），不是从正文里读的。
-    # 放在这儿而不是实现里：换一个产物库（OSS），这条日志照样得出现。
-    where = DEFAULT_STORE.where(aid)
+    store.put(aid, title, summary, file_type, content)
+    where = store.where(aid)
     trace.note(
         f"✅ 产物落盘 · {aid}《{title}》（{len(content)} 字）"
         + (f" → {where}" if where else "（本次只进内存，没落盘）"),
@@ -202,12 +201,17 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
     return aid
 
 
-def make_write_artifact(created: list[str] | None = None):
-    """造一个 `write_artifact` 工具。`created` 非空时，顺手把产物 ID 记进去。
+def store_artifact(title: str, summary: str, file_type: str, content: str) -> str:
+    """把产物落进产物库（库自带那个），返回产物 ID。"""
+    return _store_into(DEFAULT_STORE, title, summary, file_type, content)
 
-    要"造"而不是共用一个：执行器要回答"这次 run 写了哪些产物"（`outcome.artifacts`）——
-    改成记账，谁写的谁自己记。用闭包、不用模块级全局：并行 delegate 时两个执行器会互相
-    覆盖 —— 闭包 = 按 run 归属，并发窗口结构上不存在。
+
+def make_write_artifact(created: list[str] | None = None, store: ArtifactStore = DEFAULT_STORE):
+    """造一个 `write_artifact` 工具，落在给定的产物库上。
+
+    `created` 非空时顺手把产物 ID 记进去（执行器要回答"这次 run 写了哪些产物"）；用闭包不用
+    模块级全局：并行 delegate 时两个执行器会互相覆盖。`store` 是宿主注入的那个，不传就用库
+    自带的。
     """
 
     @tool
@@ -222,56 +226,65 @@ def make_write_artifact(created: list[str] | None = None):
                 平台据此**硬性按类型保存**：说 md 就存 `.md`，说 html 就存 `.html`。
             content: 产物正文全文。
         """
-        aid = store_artifact(title, summary, file_type, content)
+        aid = _store_into(store, title, summary, file_type, content)
         if created is not None:
             created.append(aid)
-        a = session.current().artifacts[aid]
+        a = store.get(aid) or {}
         # 返回里带上文件类型和保存地址 —— 用户和后面的代码都要靠它找到这份产物
-        where = f"\n文件：{a['path']}" if a.get("path") else ""
-        return f"已写入产物 {aid}（{len(content)} 字，{a['ext'].lstrip('.')}）{where}"
+        at = f"\n位置：{store.where(aid)}" if store.where(aid) else ""
+        return f"已写入产物 {aid}（{len(content)} 字，{a.get('ext', '').lstrip('.')}）{at}"
 
     return write_artifact
 
 
-#: 主 agent 用的那个（它不需要按 run 记账 —— 它写的东西直接进自己的对话）
-write_artifact = make_write_artifact()
+def make_read_artifact(store: ArtifactStore = DEFAULT_STORE):
+    """造一个 `read_artifact` 工具，读给定的产物库。"""
+
+    @tool
+    async def read_artifact(artifact_id: str) -> str:
+        """按需读回产物全文（渐进式披露第二层）。
+
+        ⚠️ **读了就进你的上下文**，长产物会一直占着。只有确实要看内容时才读；
+        只是把它交给下一个任务，用 `delegate(..., artifacts=[...])` 传 ID 就够了。
+        """
+        a = store.get(artifact_id)
+        # 不用 `【…】`（段名专用符号）—— 它是工具返回的头，不是段名。
+        return f"**{a['title']}**\n\n{a['content']}" if a else f"产物 {artifact_id} 不存在"
+
+    return read_artifact
 
 
-@tool
-async def read_artifact(artifact_id: str) -> str:
-    """按需读回产物全文（渐进式披露第二层）。
+def artifact_index_lines(store: ArtifactStore = DEFAULT_STORE) -> list[str]:
+    """产物清单（渐进式披露第一层）：ID / 名称 / 字数 / 类型 / 梗概 / 位置，不含正文。
 
-    ⚠️ **读了就进你的上下文**，长产物会一直占着。只有确实要看内容时才读；
-    只是把它交给下一个任务，用 `delegate(..., artifacts=[...])` 传 ID 就够了。
-    """
-    a = get(artifact_id)
-    # 不用 `【…】`（段名专用符号）—— 它是工具返回的头，不是段名。
-    return f"**{a['title']}**\n\n{a['content']}" if a else f"产物 {artifact_id} 不存在"
-
-
-def artifact_index_lines() -> list[str]:
-    """产物清单（渐进式披露第一层）：ID / 名称 / 字数 / 类型 / 梗概 / 落盘路径，不含正文。
-
-    路径必须在这一层：主 agent 要答"文件在哪"，而它在投递重跑（`feed`）那条路上没有回执
+    位置必须在这一层：主 agent 要答"东西在哪"，而它在投递重跑（`feed`）那条路上没有回执
     （回执只属于 `delegate` 工具调用），台账的完成行又只有 ID。
     放在这一层而不是台账：台账是每轮注入的索引、必须短，这里是按需的；形状和回执
-    【产出的产物】一致（ID ＋ 梗概一行，路径另起一行缩进 2 格）。
+    【产出的产物】一致（ID ＋ 梗概一行，位置另起一行缩进 2 格）。
+
+    标签用"位置"不用"文件"：库自带的是本地路径，宿主可能是 OSS 的 URL —— 标签只有一份，
+    得两边都成立（`where()` 给裸值，怎么排版是这儿的事）。
     """
     return [
         f"- {aid}《{a['title']}》（{len(a['content'])} 字，{a.get('ext', '.md').lstrip('.')}）"
         f"—— {a.get('summary') or '（无梗概）'}"
-        + (f"\n  文件：{a['path']}" if a.get("path") else "")
-        for aid, a in session.current().artifacts.items()
+        + (f"\n  位置：{store.where(aid)}" if store.where(aid) else "")
+        for aid, a in store.items()
     ]
 
 
-@tool
-async def list_artifacts() -> str:
-    """列出本会话已交付的产物：ID、名称、字数、梗概、**落盘路径**。**不含正文。**
+def make_list_artifacts(store: ArtifactStore = DEFAULT_STORE):
+    """造一个 `list_artifacts` 工具，列给定的产物库。"""
 
-    要判断"该把哪份产物交给下一个任务"、或**要答"文件在哪"**时用它；
-    正文按需用 `read_artifact` 读。
-    """
-    if not session.current().artifacts:
-        return "本会话还没有产物。"
-    return "本会话已交付的产物：\n" + "\n".join(artifact_index_lines())
+    @tool
+    async def list_artifacts() -> str:
+        """列出本会话已交付的产物：ID、名称、字数、梗概、**在哪**。**不含正文。**
+
+        要判断"该把哪份产物交给下一个任务"、或**要答"东西在哪"**时用它；
+        正文按需用 `read_artifact` 读。
+        """
+        if not store.items():
+            return "本会话还没有产物。"
+        return "本会话已交付的产物：\n" + "\n".join(artifact_index_lines(store))
+
+    return list_artifacts

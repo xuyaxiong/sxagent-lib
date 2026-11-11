@@ -28,10 +28,11 @@ Skill 是一份写好的专业能力：说明加脚本，可以反复用。Task 
 这三个谁在上面用都行，自己不知道调用方是谁。
 
 中间一层是三个领域。`skills.py` 和 `skill_pack.py` 管"会什么"：前者是 `Skill` 对象（`name` /
-`description` / `instructions` 三个字段）和内置技能表，后者负责把磁盘上的技能文件夹读成
-`Skill`，并列出、读取它自带的文件，自己不做语义判断。`artifacts.py` 管"交付了什么"：产物
-存、取、发 ID、按类型定扩展名，落地那一刻就写盘，不管技能。`registry.py` 单独站着，只放
-技能表：读走 `get/all/values/names/catalog`，换表那三个口子挂在 `testing` 上，不给 dict。
+`description` / `instructions` 三个字段）、来源接口 `SkillSource` 和清单排版，后者是它的磁盘
+实现（把技能文件夹读成 `Skill`，列出、读取它自带的文件），自己不做语义判断。`artifacts.py`
+管"交付了什么"：产物库接口 `ArtifactStore` 加内存实现，存、取、发 ID、按类型定扩展名，落地
+那一刻就写盘，不管技能。内置那张技能表就是 `skills.py` 里的一份字面量，读走 `builtin_skills()`
+（给副本，不给 dict）。
 
 再往上是执行。`executor.py` 跑一次任务，接受执行器申报 `ask_user`，限制循环次数，它不持有
 状态、不跨轮，也不直接问用户。`agent.py` 是主 agent，`delegate` 工具、委托单渲染、快照用户
@@ -59,8 +60,9 @@ config ──► trace ──► (所有模块都在写日志)
 
 有三条边界是踩过坑才画出来的。`executor` 和 `agent` 互相不 import，公共的 LLM 调用都放
 `llm.py`，否则两者会绕成环。`skills` 和 `artifacts` 是两个领域，一个管"会什么"，一个管
-"交付了什么"，它们的改动理由不同，不该粘在一起。技能表只有一个家，就是 `registry.py`：
-别的模块一律 `registry.get()` 拿，换技能只走 `replace` / `extend` / `reset`。
+"交付了什么"，它们的改动理由不同，不该粘在一起。两个领域对外都是接口：技能从哪来是
+`skills.SkillSource`（实现在 `skill_pack.py`），产物放哪是 `artifacts.ArtifactStore`
+（实现在同一个文件里），库自己的代码只认接口，宿主注入自己的实现。
 
 ## 三个对象，一条不变量
 
@@ -68,9 +70,9 @@ Skill 是静态的技能包，住在 `skills.py`，只有名字、说明、指�
 业务工作，跨轮存活，住在图状态的 `tasks` 里，字段定义在 `handoff/briefing.py`。Artifact 是
 运行期交付物，住在 `artifacts.py`。三个对象各有各的家，不互相包含。
 
-不变量只有一条，但它是硬的：`read_skill_file` 只认 `list_skill_files` 报出来的文件。路径
+不变量只有一条，但它是硬的：`SkillSource.read_file` 只认 `files()` 报出来的文件。路径
 穿越、二进制、超大文件都由这一条挡住，不需要第二套路径检查。加一处新入口时，只要它还走
-这两个函数，安全性就自动成立。
+这两个方法，安全性就自动成立。
 
 ## 一次 `invoke` 的时序
 

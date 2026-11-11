@@ -31,16 +31,17 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
     from langgraph.graph.state import CompiledStateGraph
 
-from sxagent import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
 from sxagent import (
     executor,  # 走模块属性，见 delegate 的注释
     trace,
 )
-from sxagent.artifacts import (
+from sxagent.artifacts import (  # 产物领域
+    DEFAULT_STORE,
+    ArtifactStore,
     artifact_index_lines,
-    list_artifacts,
-    read_artifact,
-    write_artifact,
+    make_list_artifacts,
+    make_read_artifact,
+    make_write_artifact,
 )
 from sxagent.config import get_model
 from sxagent.handoff import Outcome  # 执行器结果的契约（实现在 executor，由测试盯着）
@@ -63,9 +64,12 @@ from sxagent.handoff.receipt import (  # 回执
     render_receipt,
 )
 from sxagent.llm import safe_structured
-from sxagent.registry import registry  # 技能注册表（唯一持有者）
-from sxagent.skill_pack import read_skill, read_skill_file  # 技能包：两个读工具（磁盘）
-from sxagent.skills import Skill  # 技能领域
+from sxagent.skill_pack import (  # 技能来源：库自带的默认实现 ＋ 两个读工具的工厂
+    DEFAULT_SOURCE,
+    make_read_skill,
+    make_read_skill_file,
+)
+from sxagent.skills import Skill, SkillSource, render_catalog  # 技能领域 ＋ 来源接口
 
 #: 主 agent 的 system prompt。它是平台约定，不约束 skill 作者。
 _MAIN_PROMPT = (
@@ -134,7 +138,7 @@ _MAIN_PROMPT = (
     "交付了哪几样、各自的产物 ID、**文件在哪**、以及执行器给的**梗概**。\n"
     "\n"
     "- 🔴 **文件路径一定要给** —— `delegate` 的返回里带着它（形如"
-    "「文件：art_001 → <路径>」）。\n"
+    "「位置：art_001 → <路径>」）。\n"
     "  用户是拿着这个路径去**打开文件**的：**只说 ID，他找不到东西**。\n"
     "  （实测：路径已经给到你了，但你有时会漏掉它、只报 ID 和摘要 —— 别漏。）\n"
     "\n"
@@ -220,7 +224,13 @@ async def _ask_main(
 
 
 async def try_answer_then_rerun(
-    rec: Task, skill: Skill, outcome: Outcome, *, messages: list[BaseMessage]
+    rec: Task,
+    skill: Skill,
+    outcome: Outcome,
+    *,
+    messages: list[BaseMessage],
+    artifacts: ArtifactStore = DEFAULT_STORE,
+    skills: SkillSource = DEFAULT_SOURCE,
 ) -> tuple[Outcome, str]:
     """执行器说「缺信息」→ 主 agent 先试答 → 答得上就带回去重跑一遍。
 
@@ -234,12 +244,25 @@ async def try_answer_then_rerun(
     # 「问」取 `outcome.asked`（`ask_user` 的原话）而不是 `report`（混着过场的那段话）。
     rec["qa"] = [*(rec.get("qa") or []), {"by": "主 agent", "q": outcome.asked, "a": answer}]
     # 试答后重跑也是重入：走同一份交接书（带上刚才那一轮的进度、它问过什么）
-    o2 = await executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
+    o2 = await executor.run_task(
+        skill,
+        render_briefing(rec, artifacts),
+        rec.get("user_turns"),
+        artifacts=artifacts,
+        skills=skills,
+    )
     return o2, answer
 
 
 async def dispatch(
-    skill: Skill, rec: Task, tasks: list[Task], *, trigger: str, messages: list[BaseMessage]
+    skill: Skill,
+    rec: Task,
+    tasks: list[Task],
+    *,
+    trigger: str,
+    messages: list[BaseMessage],
+    artifacts: ArtifactStore = DEFAULT_STORE,
+    skills: SkillSource = DEFAULT_SOURCE,
 ) -> tuple[Outcome, str, list[Task]]:
     """派发编排，`delegate` 与 `graph._feed_waiting` 共用的那一段。
 
@@ -249,12 +272,20 @@ async def dispatch(
 
     只做编排，不管出口措辞。返回 `(最终 outcome, 试答, 被取代的 Task)`。
     """
-    outcome = await executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
+    outcome = await executor.run_task(
+        skill,
+        render_briefing(rec, artifacts),
+        rec.get("user_turns"),
+        artifacts=artifacts,
+        skills=skills,
+    )
     absorb_outcome(rec, outcome)
     rec["run_by"] = trigger
     answer = ""
     if outcome.status == "waiting_for_input":
-        outcome, answer = await try_answer_then_rerun(rec, skill, outcome, messages=messages)
+        outcome, answer = await try_answer_then_rerun(
+            rec, skill, outcome, messages=messages, artifacts=artifacts, skills=skills
+        )
     settle(rec, outcome)
     mooted = moot_older_waiting(rec, tasks) if outcome.status == "completed" else []
     return outcome, answer, mooted
@@ -378,13 +409,14 @@ def _out(
     agent_answer: str = "",
     note: str = "",
     mooted: list[Task] | None = None,
+    artifacts: ArtifactStore = DEFAULT_STORE,
 ) -> Command:
     """统一的返回口，总是带上被取代的旧 Task。
 
     一次做完两件事：构造回执对象、渲染成文本。文本进 `content`（模型只看这个），对象挂
     `additional_kwargs`（记录层读它）。
     """
-    r = build_receipt(outcome, agent_answer=agent_answer, note=note)
+    r = build_receipt(outcome, agent_answer=agent_answer, note=note, store=artifacts)
     text = render_receipt(r)
     # 交接关键日志（复盘用）：这一跳交了多少、有没有结构化对象。
     # 正文不在这里 dump：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
@@ -408,6 +440,7 @@ def _reply(
     *,
     answer: str = "",
     mooted: list[Task] | None = None,
+    artifacts: ArtifactStore = DEFAULT_STORE,
 ) -> Command:
     """把这一趟的结果说回主 agent：按三态枚举分派，穷举，没有第四种。"""
     # ① 完成了 —— 平台不下"完成了"的结论：三态是结构算的，"够不够"由主 agent 看回执判。
@@ -420,6 +453,7 @@ def _reply(
             agent_answer=answer,
             note=next_note("completed", skill=skill.name),
             mooted=mooted,
+            artifacts=artifacts,
         )
 
     # ② 在要信息 —— 试答已在 `dispatch` 里走过；走到这里 = 答不上（或答了仍缺）→
@@ -430,7 +464,9 @@ def _reply(
             f"由平台原样转给用户（不由主 agent 代问）",
             kind="waiting",
         )
-        return _out(runtime, rec, superseded, outcome, note=next_note("waiting"))
+        return _out(
+            runtime, rec, superseded, outcome, note=next_note("waiting"), artifacts=artifacts
+        )
 
     # ③ 只剩 incomplete：推了 N 轮，既没交产物也没申报要信息，交给主 agent 决定。平台不猜
     #    它为什么没交（不读正文）。平台故障 ≠ 执行器干不了：故障时"推了 N 轮"是假话，
@@ -447,81 +483,107 @@ def _reply(
             superseded,
             outcome,
             note=next_note("fault", fault_kind=outcome.fault_kind),
+            artifacts=artifacts,
         )
     trace.note(
         f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
         kind="delegate_failed",
     )
-    return _out(runtime, rec, superseded, outcome, note=next_note("failed"))
+    return _out(runtime, rec, superseded, outcome, note=next_note("failed"), artifacts=artifacts)
 
 
-@tool
-async def delegate(
-    skill_name: str,
-    task: str,
-    runtime: ToolRuntime,
-    artifacts: list[str] | None = None,
-) -> Command:
-    """把**一件具体工作**委派给隔离的执行器（它在独立上下文里干，只把产物和**梗概**带回来）。
+def make_delegate(store: ArtifactStore = DEFAULT_STORE, source: SkillSource = DEFAULT_SOURCE):
+    """造一个 `delegate` 工具，落在给定的产物库与技能来源上。
 
-    **需要专业技能时一律用它**；闲聊、追问、澄清自己直接答。
-    执行器在独立上下文里干活，产出不会撑爆你的上下文。
-
-    ⚠️ **用户原话由平台原样转交**：每一轮都在执行器手里的索引里（序号 · 字数 · 开头 ·
-    它在回答什么），需要哪一轮的全文它自己按需读。所以你**不用**在 `task` 里复述用户的话，
-    也不用标注依据哪一轮。
-
-    Args:
-        skill_name: 技能名。
-        task: 这件工作的具体要求。**不要把前序产物的正文抄进来** —— 需要它作为输入时，
-            把产物 ID 放进 `artifacts`，执行器会自己读全文（转述既失真、又白占你的上下文）。
-        artifacts: 这次工作要参考的产物 ID（如 `["art_001"]`）。不确定有哪些产物先
-            `list_artifacts()`；不确定某个技能交付什么先 `read_skill(name)`。
-
-    ⚠️ **它自己只做四步**：**准入 → 立案 → 执行 → 回话**。
-    后三步各在一个私有件里（`_new_task` / `dispatch` / `_reply`）。
+    准入要按来源查技能在不在、按产物库查产物在不在，回执要按产物库列清单。
     """
-    # ① 准入 —— 技能不存在 / 引用了不存在的产物，当场拒：编出来的 ID 放行的话，执行器
-    #    读不到会自己找补，错误被埋进产物里。
-    skill = registry.get(skill_name)
-    if skill is None:
-        return _reject(
-            runtime, "rejected_skill", f"❌ 没有技能「{skill_name}」", "、".join(registry.names())
+
+    @tool
+    async def delegate(
+        skill_name: str,
+        task: str,
+        runtime: ToolRuntime,
+        artifacts: list[str] | None = None,
+    ) -> Command:
+        """把**一件具体工作**委派给隔离的执行器（它在独立上下文里干，只把产物和**梗概**带回来）。
+
+        **需要专业技能时一律用它**；闲聊、追问、澄清自己直接答。
+        执行器在独立上下文里干活，产出不会撑爆你的上下文。
+
+        ⚠️ **用户原话由平台原样转交**：每一轮都在执行器手里的索引里（序号 · 字数 · 开头 ·
+        它在回答什么），需要哪一轮的全文它自己按需读。所以你**不用**在 `task` 里复述用户的话，
+        也不用标注依据哪一轮。
+
+        Args:
+            skill_name: 技能名。
+            task: 这件工作的具体要求。**不要把前序产物的正文抄进来** —— 需要它作为输入时，
+                把产物 ID 放进 `artifacts`，执行器会自己读全文（转述既失真、又白占你的上下文）。
+            artifacts: 这次工作要参考的产物 ID（如 `["art_001"]`）。不确定有哪些产物先
+                `list_artifacts()`；不确定某个技能交付什么先 `read_skill(name)`。
+
+        ⚠️ **它自己只做四步**：**准入 → 立案 → 执行 → 回话**。
+        后三步各在一个私有件里（`_new_task` / `dispatch` / `_reply`）。
+        """
+        # ① 准入 —— 技能不存在 / 引用了不存在的产物，当场拒：编出来的 ID 放行的话，执行器
+        #    读不到会自己找补，错误被埋进产物里。
+        skill = source.get(skill_name)
+        if skill is None:
+            return _reject(
+                runtime,
+                "rejected_skill",
+                f"❌ 没有技能「{skill_name}」",
+                "、".join(s.name for s in source.values()),
+            )
+        refs = [a for a in (artifacts or []) if a]
+        unknown = [a for a in refs if not store.has(a)]
+        if unknown:
+            # 用换行拼，不用"；"：清单每项可能两行（梗概 ＋ 路径），分号拼会挤成一大段。
+            have = "\n".join(artifact_index_lines(store)) or "（本会话还没有产物）"
+            return _reject(
+                runtime, "rejected_artifact", f"❌ 产物 {'、'.join(unknown)} 不存在", have
+            )
+
+        # ② 立案 —— 这次委派记成一条 Task。用户原话平台硬搬（快照进 Task），全文按需取。
+        turns = build_user_turns(runtime.state.get("messages") or [])
+        # id 用 tool_call_id 派生：并行调用时不会撞车。必须取尾部：前几位所有调用都一样。
+        tid = f"t{(runtime.tool_call_id or 'x')[-8:]}"
+        # 同 skill 下还没了结的旧 Task → 标记 superseded，免得台账里挂着过期项
+        superseded = _supersede_old(runtime, skill_name)
+        rec = _new_task(skill_name, task, tid, refs, turns)
+        # kind：语义标签，展示层（订阅事件的那层）按它归角色 —— 不靠子串认行
+        trace.section(f"delegate · {skill_name} · {tid}", kind="dispatch")
+        if superseded:
+            trace.note(
+                f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
+                kind="supersede",
+            )
+
+        # ③ 执行 —— 编排（run_task → 落账 → 试答 → 落账 → 取代）走两条路共用的那个函数；
+        #    `run_task` 内部已含出口限制：既没完成也没提问会被推回去继续。
+        outcome, answer, mooted = await dispatch(
+            skill,
+            rec,
+            runtime.state.get("tasks") or [],
+            trigger="delegate",
+            messages=runtime.state.get("messages") or [],
+            artifacts=store,
+            skills=source,
         )
-    refs = [a for a in (artifacts or []) if a]
-    unknown = [a for a in refs if not artifacts_mod.has(a)]
-    if unknown:
-        # 用换行拼，不用"；"：清单每项可能两行（梗概 ＋ 路径），分号拼会挤成一大段。
-        have = "\n".join(artifact_index_lines()) or "（本会话还没有产物）"
-        return _reject(runtime, "rejected_artifact", f"❌ 产物 {'、'.join(unknown)} 不存在", have)
 
-    # ② 立案 —— 这次委派记成一条 Task。用户原话平台硬搬（快照进 Task），全文按需取。
-    turns = build_user_turns(runtime.state.get("messages") or [])
-    # id 用 tool_call_id 派生：并行调用时不会撞车。必须取尾部：前几位所有调用都一样。
-    tid = f"t{(runtime.tool_call_id or 'x')[-8:]}"
-    # 同 skill 下还没了结的旧 Task → 标记 superseded，免得台账里挂着过期项
-    superseded = _supersede_old(runtime, skill_name)
-    rec = _new_task(skill_name, task, tid, refs, turns)
-    # kind：语义标签，展示层（订阅事件的那层）按它归角色 —— 不靠子串认行
-    trace.section(f"delegate · {skill_name} · {tid}", kind="dispatch")
-    if superseded:
-        trace.note(
-            f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
-            kind="supersede",
+        # ④ 回话 —— 按三态说回主 agent（穷举，没有第四种）。
+        return _reply(
+            runtime,
+            rec,
+            superseded,
+            tid,
+            skill,
+            outcome,
+            answer=answer,
+            mooted=mooted,
+            artifacts=store,
         )
 
-    # ③ 执行 —— 编排（run_task → 落账 → 试答 → 落账 → 取代）走两条路共用的那个函数；
-    #    `run_task` 内部已含出口限制：既没完成也没提问会被推回去继续。
-    outcome, answer, mooted = await dispatch(
-        skill,
-        rec,
-        runtime.state.get("tasks") or [],
-        trigger="delegate",
-        messages=runtime.state.get("messages") or [],
-    )
-
-    # ④ 回话 —— 按三态说回主 agent（穷举，没有第四种）。
-    return _reply(runtime, rec, superseded, tid, skill, outcome, answer=answer, mooted=mooted)
+    return delegate
 
 
 # ──────────────────────────── 装配 ────────────────────────────
@@ -530,12 +592,30 @@ async def delegate(
 #: `inline` 是全硬的（工具根本不存在），`delegate` 是半硬的（拿掉原料，但挡不住它直接写）。
 EXEC_PATH = "auto"
 
-#: 三种模式各给哪些工具。改这里时想清楚：拿掉某个工具会不会顺手拿掉一条合法能力。
-_TOOLS: dict[str, list[BaseTool]] = {
-    "auto": [delegate, write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
-    "delegate": [delegate, list_artifacts],
-    "inline": [write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
-}
+
+def _tools_for(exec_path: str, store: ArtifactStore, source: SkillSource) -> list[BaseTool]:
+    """这条执行路径给哪些工具。改这里时想清楚：拿掉某个工具会不会顺手拿掉一条合法能力。
+
+    按装配现造（不缓存）：产物那几个工具闭包住注入的产物库，技能那两个闭包住注入的来源。
+    """
+    return {
+        "auto": [
+            make_delegate(store, source),
+            make_write_artifact(store=store),
+            make_read_artifact(store),
+            make_list_artifacts(store),
+            make_read_skill(source),
+            make_read_skill_file(source),
+        ],
+        "delegate": [make_delegate(store, source), make_list_artifacts(store)],
+        "inline": [
+            make_write_artifact(store=store),
+            make_read_artifact(store),
+            make_list_artifacts(store),
+            make_read_skill(source),
+            make_read_skill_file(source),
+        ],
+    }[exec_path]
 
 
 def tool_names() -> set[str]:
@@ -544,7 +624,11 @@ def tool_names() -> set[str]:
     审计层按它列表来源（`app.runtime.TOOL_SOURCE`）：加了工具忘了补表，记录里那条返回的
     来源会静默回落成"平台"。测试拿这个函数断覆盖性。
     """
-    return {tool.name for tools in _TOOLS.values() for tool in tools}
+    return {
+        tool.name
+        for mode in ("auto", "delegate", "inline")
+        for tool in _tools_for(mode, DEFAULT_STORE, DEFAULT_SOURCE)
+    }
 
 
 #: 非默认模式下往系统提示里补一句 —— 工具集变了，得让它知道为什么。
@@ -622,13 +706,21 @@ def _check_tool_names(tools: Sequence[BaseTool]) -> None:
         )
 
 
-def build_agent(state_schema: type, extra_tools: Sequence[BaseTool] = ()) -> CompiledStateGraph:
+def build_agent(
+    state_schema: type,
+    *,
+    artifacts: ArtifactStore = DEFAULT_STORE,
+    skills: SkillSource = DEFAULT_SOURCE,
+    extra_tools: Sequence[BaseTool] = (),
+) -> CompiledStateGraph:
     """主 agent：一个完整的 agent（工具 + 循环）。
 
     工具集 = `EXEC_PATH` 定的那组机制工具（`delegate` / `write_artifact` / …）**加上**宿主的
     领域工具；重名当场报错。机制工具不可摘：摘了机制就不完整，提示词里那些话也成了假话。
+    `artifacts` 是宿主注入的产物库，`skills` 是技能来源（磁盘 / OSS / 数据库），不传就用
+    库自带的。
     """
-    tools = [*_TOOLS[EXEC_PATH], *extra_tools]
+    tools = [*_tools_for(EXEC_PATH, artifacts, skills), *extra_tools]
     _check_tool_names(tools)
     return create_agent(
         get_model(),
@@ -636,7 +728,7 @@ def build_agent(state_schema: type, extra_tools: Sequence[BaseTool] = ()) -> Com
         system_prompt=_MAIN_PROMPT
         + _MODE_NOTE.get(EXEC_PATH, "")
         + "\n\n可用技能：\n"
-        + registry.catalog(),
+        + render_catalog(skills.values()),
         state_schema=state_schema,
         # 待答时不发言 —— 见 `_StopWhenPending`
         middleware=[_StopWhenPending()],
