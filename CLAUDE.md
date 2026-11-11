@@ -124,8 +124,8 @@ AST 是否相同、字符串有没有变、文件在不在、行数多少，这�
 - 单轮冒烟：`uv run python -m sxagent --say "你好"`
 - 打包：`uv run python build_cli.py`，产物在 `dist/sxagent/`。发出去之前必须在一台没装 Python 的
   机器上真跑一遍
-- 测试：暂时没有，还没建。建的时候照 `docs/conventions.md` 的「测试」小节来
-- lint：`uv run ruff check .`，配置在 `pyproject.toml`，存量还没清
+- 测试：`uv run pytest`。目录镜像源码、不碰真模型，规范见 `docs/conventions.md` 的「测试」小节
+- lint：`uv run ruff check .`，配置在 `pyproject.toml`
 - 改完文本验收：`uv run python scripts/text_audit.py`，报的是"代码和字符串有没有被顺手碰"，
   只报事实，不管风格
 - 结论必须实测。不说"我觉得应该没问题"；说实测就写清验什么、怎么验、预期是什么

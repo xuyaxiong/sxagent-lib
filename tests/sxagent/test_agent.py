@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from sxagent.agent import _AgentAnswer, build_user_turns, try_answer_then_rerun
+from sxagent.agent import _AgentAnswer, _StopWhenPending, build_user_turns, try_answer_then_rerun
 from sxagent.executor import ExecOutcome
 from sxagent.handoff.briefing import Task
 from sxagent.skills import Skill
@@ -42,6 +42,42 @@ def test_two_user_messages_in_a_row_do_not_share_one_context() -> None:
         [AIMessage("更早的一句"), HumanMessage("第一句"), HumanMessage("第二句")]
     )
     assert [t["after"] for t in out] == ["更早的一句", ""]
+
+
+def _tool_returned(handoff: dict[str, object] | None = None) -> ToolMessage:
+    return ToolMessage(
+        "返回", tool_call_id="c1", additional_kwargs=({"handoff": handoff} if handoff else {})
+    )
+
+
+def test_a_waiting_receipt_in_the_batch_stops_the_turn() -> None:
+    """本批工具返回里有待答 → 这一拍不生成。
+
+    要看**整批**：模型会并行调工具，待答那条不一定排在最后 —— 只看末尾那条，机制就静默失效。
+    """
+    state = {
+        "messages": [
+            AIMessage(""),
+            _tool_returned({"kind": "waiting"}),
+            _tool_returned({"kind": "completed"}),
+        ]
+    }
+
+    assert _StopWhenPending().before_model(state, None) == {"jump_to": "end"}
+
+
+def test_the_flag_stops_the_turn_after_a_delivery() -> None:
+    """投递之后又问了一个：这条路上消息末尾是 `HumanMessage`，扫不到工具返回，事实在 `fed_asking`。"""
+    state = {"messages": [HumanMessage("答复")], "fed_asking": True}
+
+    assert _StopWhenPending().before_model(state, None) == {"jump_to": "end"}
+
+
+def test_a_normal_turn_is_not_stopped() -> None:
+    """没有待答就照常发言 —— 拦过头等于主 agent 不说话。"""
+    state = {"messages": [AIMessage(""), _tool_returned({"kind": "completed"})]}
+
+    assert _StopWhenPending().before_model(state, None) is None
 
 
 async def test_the_injected_model_reaches_the_structured_call(no_default_model) -> None:

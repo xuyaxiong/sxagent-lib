@@ -21,6 +21,8 @@ from langgraph.store.memory import InMemoryStore
 from sxagent import artifacts, graph
 from sxagent.artifacts import MemoryArtifacts
 from sxagent.executor import ExecOutcome
+from sxagent.graph import next_pending, render_relay
+from sxagent.handoff.briefing import Task
 from sxagent.skill_pack import LocalSkills
 from sxagent.skills import Skill
 from tests.fakes import ToolCallingFakeModel
@@ -111,6 +113,34 @@ async def test_the_feed_path_uses_the_injected_store_and_source(monkeypatch) -> 
     assert seen["artifacts"] is store
     assert seen["skills"] is source
     assert seen["model"] is model
+
+
+def test_the_relay_carries_the_question_not_the_monologue() -> None:
+    """贴给用户的是它申报的那句原话（`asked`），不是它最后说的那段（`report`）。
+
+    用户要答的是问题，不是自述；退回 `report` 会把"数据缺失"藏成"看起来正常"。
+    """
+    t: Task = {
+        "id": "t1",
+        "skill": "哨兵技能",
+        "stage": "waiting_for_input",
+        "asked": "哨兵问题",
+        "report": "哨兵独白",
+    }
+
+    text = render_relay([t])
+
+    assert "哨兵问题" in text
+    assert "哨兵独白" not in text
+
+
+def test_next_pending_picks_the_waiting_one() -> None:
+    """通道一次摆一个：摆的是待答那条，没有待答就什么都不摆。"""
+    done: Task = {"id": "t1", "skill": "a", "stage": "completed"}
+    waiting: Task = {"id": "t2", "skill": "b", "stage": "waiting_for_input"}
+
+    assert next_pending({"tasks": [done, waiting]}) == waiting
+    assert next_pending({"tasks": [done]}) is None
 
 
 async def test_the_injected_model_reaches_the_main_agent(no_default_model) -> None:

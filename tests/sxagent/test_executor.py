@@ -12,7 +12,7 @@ import asyncio
 
 from sxagent import artifacts
 from sxagent.artifacts import MemoryArtifacts
-from sxagent.executor import run_task
+from sxagent.executor import ExecOutcome, _structural_status, run_task
 from sxagent.skills import Skill
 from tests.fakes import ToolCallingFakeModel
 
@@ -28,6 +28,19 @@ class _SpyStore(MemoryArtifacts):
     def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
         self.puts.append(aid)
         super().put(aid, title, summary, file_type, content)
+
+
+def test_asking_wins_over_delivering() -> None:
+    """三态由结构定，顺序不能反：交了一部分之后卡住也算在要信息 —— 反了用户就没机会答。
+
+    穷举三条：申报优先，其次交了产物，都没有才是"没出口"。
+    """
+    assert (
+        _structural_status(ExecOutcome(asked="缺课时", artifacts=["art_001"]))
+        == "waiting_for_input"
+    )
+    assert _structural_status(ExecOutcome(artifacts=["art_001"])) == "completed"
+    assert _structural_status(ExecOutcome()) == "incomplete"
 
 
 async def test_executor_writes_into_the_injected_store(monkeypatch) -> None:
