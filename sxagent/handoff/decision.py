@@ -1,17 +1,17 @@
 """决策（一次判断 → 一条记录）：判断的两端，加平台的两句描述。
 
-一次判断发生时，把它拿到的、被问的、吐出来的、平台据此怎么处置的记下来，渲染成【前提】
+一次判断发生时，把它拿到的、被问的、输出的、平台据此怎么处置的记下来，渲染成【前提】
 【问题】【结果】【下一步】四格。两种判断共用它：LLM 的试答（是交接），和平台的结构判定
 （`executor._verdict`，没有 LLM 参与）。
 
 ## 不变量
 
-1. 它为什么算交接：关键在 LLM 参与——外部给 LLM 什么、LLM 吐出什么，两端各是一次交接。
+1. 它为什么算交接：关键在 LLM 参与——外部给 LLM 什么、LLM 输出什么，两端各是一次交接。
 2. 四格各有各的类：【前提】【问题】【下一步】是平台的框架话，不标；只有【结果】要标来源。
 3. 两种作者不共用一个段名（`RESULT_BY`）：【结果】标来源，【平台判定】不标，共用必有一边
    是假话。
 4. 渲染只有一处：记录层和终端都走 `render_decision()`，载体各自处理（时间前缀、逐行上色）。
-5. 不认识的 `result_by` 当场炸，不静默退回 `llm`。"""
+5. 不认识的 `result_by` 当场报错，不静默退回 `llm`。"""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ _DECISION_KEYS: dict[str, str] = {
 }
 
 #: 【结果】那格谁写的 → 哪个 hop、哪个段名。两种作者不能共用一个段名，否则必有一边是假话：
-#: 模型吐的要标来源，平台自己的结论不标（自证没意义）。
+#: 模型输出的要标来源，平台自己的结论不标（自证没意义）。
 RESULT_BY: dict[str, tuple[str, str]] = {
     "llm": ("decision", "dec_result"),
     "platform": ("verdict", "verdict_result"),
@@ -58,7 +58,7 @@ def emit_decision(
     的合法值是领域词汇，而总线只认识形状、不认识词表。
     """
     if result_by not in RESULT_BY:
-        # 打错一个字母就静默把平台的结论标成"它说的" —— 宁可当场炸。
+        # 打错一个字母就静默把平台的结论标成"它说的" —— 宁可当场报错。
         raise ValueError(
             f"decision 的 result_by={result_by!r} 不在 {sorted(RESULT_BY)} 里（见 handoff.decision.RESULT_BY）"
         )
@@ -71,7 +71,7 @@ def render_decision(ev: dict) -> str:
     """决策事件 → 渲染出来的文本。记录层和终端共用这一处。
 
     列表 → `- ` 列表项（续行对齐，`bullet_lines`）；字符串 → 一段；空的不渲染。
-    `result_by` 决定第三个格子用哪个段名 / 哪个 hop —— 不认识的取值当场炸
+    `result_by` 决定第三个格子用哪个段名 / 哪个 hop —— 不认识的取值当场报错
     （不静默退回 `llm`：那会把平台的结论标成"它说的"）。
     """
     by = str(ev.get("result_by") or "llm")

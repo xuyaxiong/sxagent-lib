@@ -436,7 +436,7 @@ async def delegate(
     refs = [a for a in (artifacts or []) if a]
     unknown = [a for a in refs if not artifacts_mod.has(a)]
     if unknown:
-        # 用换行拼，不用"；"：清单每项可能两行（梗概 ＋ 路径），分号拼会挤成一大坨。
+        # 用换行拼，不用"；"：清单每项可能两行（梗概 ＋ 路径），分号拼会挤成一大段。
         have = "\n".join(artifact_index_lines()) or "（本会话还没有产物）"
         return _reject(runtime, "rejected_artifact",
                        f"❌ 产物 {'、'.join(unknown)} 不存在", have)
@@ -493,7 +493,7 @@ _MODE_NOTE: dict[str, str] = {
 
 
 class _StopWhenPending(AgentMiddleware):
-    """执行器一申报待答，主 agent 这一拍就不生成 —— "待答时复述问题"的收口。
+    """执行器一申报待答，主 agent 这一拍就不生成 —— "待答时复述问题"的解法。
 
     那一刻要决定的是「结果回给执行器，还是问用户」，不是对话轮次；ReAct 的默认规则
     "工具返回了 → 再生成一拍"把它当普通轮次，于是它只能复述问题。正解不是拦住输出，

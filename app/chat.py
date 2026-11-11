@@ -111,7 +111,7 @@ def _skill_label(skill) -> tuple[str, str]:
 # ──────────────────────────── 输出层：一套视觉语言 ────────────────────────────
 #
 # 每条输出带时间、标签和内容，各角色用不同标签和颜色区分。没有单独的"推理"通道：
-# OpenAI 兼容端点不吐 `reasoning_content`，能显示的就是它说的话和它调的工具、参数。
+# OpenAI 兼容端点不返回 `reasoning_content`，能显示的就是它说的话和它调的工具、参数。
 
 #: 角色 →（标签 + ANSI 颜色）。颜色在非 tty / `NO_COLOR` 下自动关掉。
 #: 标签是"图标 ＋ 英文名词"，宽度按显示列算（见 `_dw`），gutter 才对得齐。
@@ -304,7 +304,7 @@ _ROLE_BY_KIND: dict[str, str] = {
     "run_end": "exec",          # run_task 结束
     "feed": "plat",             # 平台把用户原话投给待答任务（section）
     "retry": "plat",            # 这一轮抖动、已重试一次（stream.stream_agent）
-    "stream_empty": "plat",     # 流式一步都没吐 → 退回 invoke 兜底（这一趟没有流式日志）
+    "stream_empty": "plat",     # 流式一步都没输出 → 退回 invoke 兜底（这一趟没有流式日志）
     "run_fault": "exec",        # 重试过仍失败 → 这一轮没跑成（executor.run_task）
     "ask": "exec",              # 执行器申报要信息（调了 `ask_user`）→ 这一轮结束
     "delivered": "exec",        # 执行器交付了产物 → 这一轮结束
@@ -337,7 +337,7 @@ _LIVE_CAP = 400
 
 
 def _close_pending() -> None:
-    """把挂着的块先吐出来，再播下一条事件。块没闭合就播下一条，看到的因果就是倒的。"""
+    """先把挂着的块输出出来，再播下一条事件。块没闭合就播下一条，看到的因果就是倒的。"""
     global _PENDING
     if _PENDING is not None:
         _emit(_PENDING[0], "\n".join(_PENDING[1]), stamp=_PENDING[2])
@@ -461,8 +461,8 @@ def _on_event(ev: dict) -> None:
             _emit("inject", "平台 → 执行器：本次交接的全部已知\n" + str(ev["text"]),
                   stamp=ev["ts"])
     elif t == "decision":
-        # 接在挂着的块尾巴上：那是这次 LLM 调用的一端（PROMPT），四段是另一端；分开吐的话
-        # 同一件事在屏幕上就是两个 DECIDE 块。没有挂着的块就自己吐一块。
+        # 接在挂着的块尾巴上：那是这次 LLM 调用的一端（PROMPT），四段是另一端；分开输出的话
+        # 同一件事在屏幕上就是两个 DECIDE 块。没有挂着的块就自己输出一块。
         if _PENDING is not None:
             _PENDING[1] += _render_decision(ev, with_who=False).splitlines()
             _close_pending()
@@ -573,7 +573,7 @@ class _Session:
     t0: float
     #: 跑成了的轮（`results.json` 的 `turns`）。
     turns: list[dict] = field(default_factory=list)
-    #: 没跑成的轮（平台故障）。单独记：`turns` 里只放跑成了的轮，但"这一轮炸过"也得进
+    #: 没跑成的轮（平台故障）。单独记：`turns` 里只放跑成了的轮，但"失败过"这件事也得进
     #: 记录，不然 results.json 看着像一切正常。
     turn_errors: list[dict] = field(default_factory=list)
     #: 主 agent 上下文读到第几条了，每轮比上一轮多出来的就是这一轮的增量。
@@ -640,9 +640,9 @@ def _absorb(s: _Session, state: dict, text: str, t: float, *, answer_to: str = "
 
 
 def _one_turn(s: _Session, text: str, *, answer_to: str = "") -> dict | None:
-    """跑一轮，返回新的 `state`；这一轮炸了就记进 `turn_errors` 并返回 `None`。
+    """跑一轮，返回新的 `state`；这一轮没跑成就记进 `turn_errors` 并返回 `None`。
 
-    炸一轮不等于结束会话：说清原因，提示符接着来。`graph.ainvoke` 是阻塞的（一轮 2–3
+    一轮没跑成不等于结束会话：说清原因，提示符接着来。`graph.ainvoke` 是阻塞的（一轮 2–3
     分钟），但过程不黑屏，事件同步到达 `_on_event`。
     """
     import traceback
@@ -684,7 +684,7 @@ def _ask_loop(s: _Session, state: dict) -> None:
             break
         t2 = time.time()
         state = _one_turn(s, ans, answer_to=p["id"])
-        if state is None:   # 投递那一轮也炸了，同主循环
+        if state is None:   # 投递那一轮也没跑成，同主循环
             break
         _absorb(s, state, ans, t2, answer_to=p["id"])
 

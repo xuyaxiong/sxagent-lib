@@ -92,8 +92,8 @@ ephemeral/stateless 这三个做法；Claude Code Skills 给了 `SKILL.md` 的�
 
 ## 接宿主时的选型：显示走事件订阅，别按 `values` 流推 state
 
-`node_feed` 里要跑 60 到 120 秒的执行器，而 `stream_mode="values"` 是每个 super-step 才吐
-一次，那段时间一个 chunk 都不会吐。所以宿主如果想在界面上看到进度，应该订阅事件，不要去推
+`node_feed` 里要跑 60 到 120 秒的执行器，而 `stream_mode="values"` 是每个 super-step 才输出
+一次，那段时间一个 chunk 都不会输出。所以宿主如果想在界面上看到进度，应该订阅事件，不要去推
 state。这是接宿主时的一条选型提醒，不是性能缺陷。
 
 真要按 `values` 推也不是不行，但投递得改成异步任务，图要重新长出条件边。CLI 已经在走事件
@@ -116,7 +116,7 @@ state。这是接宿主时的一条选型提醒，不是性能缺陷。
 传参要改上百个调用点、每个业务函数多一个参数，等于污染分层；contextvar 在 async web 里天然
 对齐，每个请求一个 context。
 
-`aio.py` 和 `llm.py` 是两个小收口。前者保证一个进程一个事件循环（`asyncio.run()` 跑完就关
+`aio.py` 和 `llm.py` 是两个小入口。前者保证一个进程一个事件循环（`asyncio.run()` 跑完就关
 循环，而缓存的 httpx 客户端绑在创建它的循环上）；后者让 `agent` 和 `executor` 不必互相 import。
 
 ## 注释为什么这么少

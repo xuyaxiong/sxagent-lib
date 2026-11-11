@@ -1,7 +1,7 @@
 """从同步代码里驱动协程。一个进程只有一个事件循环。
 
 宿主入口都是同步的（CLI 的 `input()`、跑批子进程、评分层），要驱动 `async def` 的节点和工具，
-得有这个收口。
+得有这个统一入口。
 
 ## 不变量
 
@@ -26,6 +26,6 @@ def run(coro: Coroutine[Any, Any, _T]) -> _T:
     """在进程级那个循环上把 `coro` 跑完，返回结果。
 
     别在异步上下文里调它（会报 "cannot be called from a running event loop"）——
-    这个函数是给同步宿主用的收口，异步代码里直接 `await`。
+    这个函数是给同步宿主用的入口，异步代码里直接 `await`。
     """
     return _LOOP.run_until_complete(coro)

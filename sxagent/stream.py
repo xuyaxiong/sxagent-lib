@@ -29,7 +29,7 @@ def stream_agent(graph, state, config, who: str, *, role: str):
     只发 `node='model'` 的 chunk：工具内部的结构化调用流出来是裸 JSON，既不可读、又和已
     解开的展示重复。多个执行器并行时事件会交错，所以 `who` 要能分辨是谁。
     """
-    # 校验在生成器外面：漏传 / 传错立刻炸，而不是等第一次 next()。
+    # 校验在生成器外面：漏传 / 传错立刻报错，而不是等第一次 next()。
     return _stream_with_retry(graph, state, config, who, trace.check_role(role, "stream_agent"))
 
 
@@ -49,7 +49,7 @@ async def _stream_with_retry(graph, state, config, who: str, role: str):
     只重试"还没走完第一步"的情况：从头重跑 state 干净、副作用不干净，第一步之后抖就
     如实抛。降级不在这层，两条链怎么退化不一样；重试前发 `retry` 事件，已流出去的字不收回。
     """
-    #: 已吐出的 values chunk 数。第一个 chunk 是"输入 state 本身"，
+    #: 已收到的 values chunk 数。第一个 chunk 是"输入 state 本身"，
     #: 所以"至少一步动过 state"等于数到 2。
     chunks_seen = 0
     for attempt in (1, 2):
@@ -110,7 +110,7 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                       "text": line, "ts": trace.stamp()})
 
     def maybe_report() -> None:
-        """参数攒够了吗？够了就报一行进度。报的是事实（已收到多少字、过了多久），不是预测。"""
+        """参数够多了吗？够了就报一行进度。报的是事实（已收到多少字、过了多久），不是预测。"""
         nonlocal reported_chars, reported_at
         if arg_chars < _WRITE_REPORT_AT:
             return
@@ -140,9 +140,9 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                 if meta.get("langgraph_node") != "model":
                     continue
                 # 换了消息就先把缓冲区落盘：模型调工具前先说一句、工具跑完再接着说，
-                # 两段之间没有换行符，攒在同一个 buf 里会被黏成一句。
+                # 两段之间没有换行符，留在同一个 buf 里会被黏成一句。
                 # 判据用 chunk.id（同一条 AI 消息的流式 chunk 共享 id）。
-                # 有些 provider 不给 id，那时保持原行为，别瞎猜边界。
+                # 有些 provider 不给 id，那时保持原行为，不要猜边界。
                 cid = getattr(chunk, "id", None)
                 if cid and cur_id and cid != cur_id:
                     flush_line(buf)
@@ -183,7 +183,7 @@ async def _stream_agent(graph, state, config, who: str, role: str):
             yield payload
     finally:
         # 收尾：最后一行没有换行符。异常时也要走这里，原因见上面那条 try/finally。
-        # 攒在 `buf` 里的那半行照发，读日志的人至少知道"它说到哪儿断的"。
+        # 留在 `buf` 里的那半行照发，读日志的人至少知道"它说到哪儿断的"。
         flush_line(buf)
 
 

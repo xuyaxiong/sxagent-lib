@@ -7,7 +7,7 @@
 
 ## 不变量
 
-1. 两种标签都是受控词汇，打错一个字母当场炸：`type` 是事件形状（八种，见 `_EVENT_TYPES`），
+1. 两种标签都是受控词汇，打错一个字母当场报错：`type` 是事件形状（八种，见 `_EVENT_TYPES`），
    `kind` 是业务语义（见 `KINDS`），展示层靠 `kind` 归角色，不靠子串匹配认行。
 2. 总线认识形状，不认识词表。`decision` 是形状，`result_by` 能取哪些值归 `handoff.decision`；
    本模块不许 import `sxagent.handoff.*`。
@@ -89,7 +89,7 @@ class _Subscription:
 def subscribe(fn: Callable[[dict], None]) -> _Subscription:
     """订阅当前会话的事件总线，事件按发布顺序同步送达。
 
-    订阅者抛异常不会炸业务：兜住并记进日志，展示层坏了最多是看不见。订阅挂在会话上而不是
+    订阅者抛异常不会影响业务：兜住并记进日志，展示层坏了最多是看不见。订阅挂在会话上而不是
     模块上，多会话共享进程时 A 的展示层收不到 B 的事件。
     """
     slot = [fn]
@@ -104,7 +104,7 @@ def _publish(ev: dict) -> None:
     所以它单独兜，兜住之后把洞标出来。`thread_id` 在这一层加，八个形状共用一处。
     """
     if ev.get("type") not in _EVENT_TYPES:
-        # 形状只有那八种：打错一个字母，记录器与展示层都会静默跳过它 —— 宁可当场炸。
+        # 形状只有那八种：打错一个字母，记录器与展示层都会静默跳过它 —— 宁可当场报错。
         raise ValueError(f"未知事件形状 type={ev.get('type')!r}：{list(_EVENT_TYPES)}")
     # 会话标识（多会话共享进程时，这是"这条事件属于谁"的唯一来源）。
     # 默认会话的 thread_id 是空串 —— 单会话宿主（CLI / 跑批）行为不变。
@@ -113,17 +113,17 @@ def _publish(ev: dict) -> None:
     if _sink_record is not None:
         try:
             _sink_record(ev)
-        except Exception as e:  # noqa: BLE001 —— 不炸业务，但必须把洞标出来，见 _mark_hole
+        except Exception as e:  # noqa: BLE001 —— 不影响业务，但必须把洞标出来，见 _mark_hole
             _mark_hole(ev, e)
     for slot in list(session.current().subs):
         fn = slot[0]
         try:
             fn(ev)
         except Exception as e:  # noqa: BLE001 —— 见 subscribe 的 docstring
-            # 没装记录器时这一行没地方写 —— 那也不能炸业务。
+            # 没装记录器时这一行没地方写 —— 那也不能影响业务。
             if _sink_write is not None:
                 _sink_write(
-                    f"[{stamp()}] ⚠️ 事件订阅者出错"
+                    f"[{fmt_ts(stamp())}] ⚠️ 事件订阅者出错"
                     f"（{getattr(fn, '__qualname__', fn)}）：{type(e).__name__}: {e}"
                 )
 
@@ -151,7 +151,7 @@ ROLES = frozenset({AGENT, EXECUTOR})
 
 
 def check_role(role: Any, where: str) -> str:
-    """角色只能是枚举值 —— 传错就当场炸，不许静默当成主 agent。"""
+    """角色只能是枚举值 —— 传错就当场报错，不许静默当成主 agent。"""
     if role not in ROLES:
         raise ValueError(
             f"{where} 的 role 必须是 {sorted(ROLES)} 之一，收到 {role!r}。"
@@ -175,7 +175,7 @@ KINDS = frozenset({
     "retry", "writing",
     # artifacts.store_artifact（`artifact` = 产物落盘了：ID、标题、字数、路径）
     "artifact",
-# graph.node_agent（`stream_empty` = 流式一步都没吐，退回 `invoke` 兜底：这一趟没有流式日志）
+# graph.node_agent（`stream_empty` = 流式一步都没输出，退回 `invoke` 兜底：这一趟没有流式日志）
     "stream_empty",
 # executor.run_task（`run_fault` = 重试仍失败；`ask` / `delivered` = 这一轮结束的结构事实）
     "run_fault", "ask", "delivered",
@@ -183,7 +183,7 @@ KINDS = frozenset({
 
 
 def _check_kind(kind: str, where: str) -> str:
-    """kind 只能是受控词汇里的值（空串 = 纯记录、不上屏）—— 打错就当场炸。"""
+    """kind 只能是受控词汇里的值（空串 = 纯记录、不上屏）—— 打错就当场报错。"""
     if kind and kind not in KINDS:
         raise ValueError(
             f"{where} 的 kind={kind!r} 不在受控词汇里（{sorted(KINDS)}）。"

@@ -14,7 +14,7 @@
    一遍更糟。平台硬保证的只有待答不丢。
 2. 断言和报告都读 `actions`，不读 `log`。`log` 是渲染出来的文本，改一句文案，读它的地方就
    静默失配。
-3. 子图 schema 里不能放带 `operator.add` reducer 的字段：子图会原样回吐，每轮翻一倍。
+3. 子图 schema 里不能放带 `operator.add` reducer 的字段：子图会原样回传，每轮翻一倍。
 4. `answer_to` / `fed_asking` 只在这一轮有意义，`node_feed` 只有一条返回路径。
 5. 投给谁由通道标（CLI 提示符 / case YAML），没有标识就一条都不投。
 6. "取哪句""取哪条"各只有一处定义（`asked_text` / `next_pending`），别处不许另写。"""
@@ -62,7 +62,7 @@ class State(TypedDict):
     #: 平台这一轮干了什么 —— 给人看的渲染记录。不许拿它做判据，改一句文案就静默失配。
     log: NotRequired[Annotated[list[str], operator.add]]
     #: 平台动作的结构化事实（谁做的 / 做了什么 / 涉及哪些 Task / 多少字）。断言与报告读它。
-    #: 不许进 `AgentState` —— 它的 reducer 是 `operator.add`，子图回吐每轮翻一倍。
+    #: 不许进 `AgentState` —— 它的 reducer 是 `operator.add`，子图回传每轮翻一倍。
     actions: NotRequired[Annotated[list[dict[str, Any]], operator.add]]
     #: 这条用户消息在回答哪个待答任务，由通道填。有它 → 只投给那一个；没有 → 一条都不投。
     #: 用后即清（写回 `""`）：不清会跟 checkpointer 活到下一轮。也不许进 `AgentState`。
@@ -75,7 +75,7 @@ class State(TypedDict):
 class AgentState(TypedDict):
     """主 agent 子图的状态，故意不含 `log`。
 
-    子图会把声明过的字段原样回吐给父图，而父图 `log` 的 reducer 是 `operator.add`，父图
+    子图会把声明过的字段原样回传给父图，而父图 `log` 的 reducer 是 `operator.add`，父图
     自己的 log 会被再加一遍，每轮翻一倍。`tasks` 不受影响（按 id 合并，幂等）。
     """
 
@@ -301,7 +301,7 @@ def _make_node_agent(main_agent):
         prev_n = len(state.get("messages") or [])
         logs: list[str] = []
         step = 0
-        # `stream_agent` 顺带把每个字也写进日志（攒到换行写一行），那几十秒不再黑屏。
+        # `stream_agent` 顺带把每个字也写进日志（累积到换行写一行），那几十秒不再黑屏。
         async for chunk in stream.stream_agent(main_agent, state, config, "主 agent",
                                               role=trace.AGENT):
             out = chunk
@@ -317,10 +317,10 @@ def _make_node_agent(main_agent):
                 line = f"[工具] 主 agent → {name}（{args}）"
                 trace.note(line)
                 logs.append(line)
-        if not out:  # 理论上不会（stream 至少吐一次最终 state）—— 兜一下，别把状态弄丢
+        if not out:  # 理论上不会（stream 至少输出一次最终 state）—— 兜一下，别把状态弄丢
     # 这条兜底必须说话：走到这里等于这一趟全程没有流式日志，正是要治的黑屏。
             trace.note(
-                "⚠️ 流式**一步都没吐** → 退回 `invoke` 兜底：**这一趟没有流式日志**，"
+                "⚠️ 流式**一步都没输出** → 退回 `invoke` 兜底：**这一趟没有流式日志**，"
                 "跑完才回来。正常不该发生 —— 见到这条要查 `stream` 为什么是空的。",
                 kind="stream_empty",
             )

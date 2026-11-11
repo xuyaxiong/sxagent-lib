@@ -12,7 +12,7 @@
 2. 不建第二张 kind 到角色的表（那是 `chat._ROLE_BY_KIND` 的表态）。这一层按形状渲染：认得的
    形状各给一行，认不出的一律照原样打出来——排版丑一点没关系，静默丢才要命。
 3. 切了必须标：块最多印 `_BLOCK_MAX_LINES` 行，超出写明还剩多少行、全文在哪。
-4. 炸一轮不等于结束会话：按轮兜住，说清原因让调用方接着问下一句。
+4. 一轮没跑成不等于结束会话：按轮兜住，说清原因让调用方接着问下一句。
 5. 待答的标识由通道填：答复提示符就是"通道"，在它下面打的字带 `answer_to` 投回去，一次摆
    一个。`--say` 下没给 `--answer` 就把问题打出来停住，不替用户编答案。"""
 
@@ -45,7 +45,7 @@ _BLOCK_MAX_LINES = 12
 #: 说话的是谁 —— 按 `role` 枚举取（逻辑），不从 `who` 的措辞里猜。
 _ROLE_TAG = {trace.AGENT: "🤖 主 agent", trace.EXECUTOR: "🔧 执行器"}
 
-_last_stream_tag = ""      # 同一角色连着吐字时，前缀只打一次
+_last_stream_tag = ""      # 同一角色连着输出时，前缀只打一次
 _tool_names: dict[tuple[str, str], str] = {}   # (role, tool_call_id) → 工具名
 
 
@@ -74,7 +74,7 @@ def _on_event(ev: dict) -> None:
     global _last_stream_tag
     t = ev.get("type")
     if t != "stream":
-        _last_stream_tag = ""   # 换个形状就把流式前缀重置（下次吐字重新标谁在说）
+        _last_stream_tag = ""   # 换个形状就把流式前缀重置（下次输出重新标谁在说）
 
     if t == "stream":
         tag = _ROLE_TAG.get(ev.get("role") or "", f"· {ev.get('who') or '平台'}")
@@ -172,7 +172,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _turn(graph, config, text: str, *, answer_to: str = "") -> dict | None:
-    """跑一轮 —— 炸了就按轮兜住、说清原因、返回 `None`（会话不死）。
+    """跑一轮 —— 没跑成就按轮兜住、说清原因、返回 `None`（会话不死）。
 
     `answer_to`：这条消息是在回答哪个待答任务 —— 由通道填（下面那个答复提示符），
     平台不猜。

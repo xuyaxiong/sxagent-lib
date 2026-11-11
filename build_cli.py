@@ -76,12 +76,12 @@ def _stash_user_data(built: Path, stash: Path, moved: list[str]) -> None:
         stash.mkdir(parents=True, exist_ok=True)
         try:
             # 用 `os.rename`（同卷改名，原子）而不用 `shutil.move` —— `move` 在改名失败时
-            # 会回退成"先复制、再删源"，删到一半炸掉会在暂存里留一份孤儿副本。
+            # 会回退成"先复制、再删源"，删到一半失败会在暂存里留一份孤儿副本。
             # 两边都在 `dist/` 下，同卷改名用不上那条回退。
             os.rename(src, stash / name)
         except OSError as e:
             # 打好的程序还开着时，它占着 `runs/` 里的 `_console.log`，Windows 不许改名。
-            # 这里不硬来：说清怎么办，已经挪走的交给 `finally` 放回去。
+            # 这里不强行处理：说清怎么办，已经挪走的交给 `finally` 放回去。
             raise RuntimeError(
                 f"挪不动 {src}（{e}）\n"
                 f"  ⚠️ 多半是**打好的程序还在跑** —— 它占着 `runs/` 里的文件。\n"
@@ -159,7 +159,7 @@ def build(out_dir: Path | None = None) -> None:
             print(f"\n已放入模板：{built / '.env.example'}")
     finally:
         # 放回放在 `finally`：打失败时更要放 —— `check=True` 一抛异常、
-        # 甚至上面挪到一半就炸（`kept` 是逐个追加的），都不能让用户的 `.env`
+        # 甚至上面挪到一半就失败（`kept` 是逐个追加的），都不能让用户的 `.env`
         # 留在暂存目录里。
         if kept:
             built.mkdir(parents=True, exist_ok=True)

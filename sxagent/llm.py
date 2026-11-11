@@ -5,7 +5,7 @@
 
 ## 不变量
 
-1. 一次抖动不该炸掉整轮，所以有兜底。
+1. 一次抖动不该让整轮失败，所以有兜底。
 2. 退化值必须保守，由 `default` 给：宁可"答不上"，不许编一个结论。
 3. 只压那一条警告，按消息匹配。别用 `simplefilter("ignore")`：看不到就观察不到。
 4. 一套，别分叉。调用方自己会渲染决策记录时，`log_response` 传 False。"""
@@ -40,7 +40,7 @@ async def safe_structured(
     """结构化输出调用 + 兜底（重试一次 → 仍失败退化到 `default`）。
 
     实测 DashScope 偶发 `grammar validation or compilation failed: sandbox grammar compile
-    timed out`，一次抖动就炸掉整个 turn。这类基础设施抖动不该让整轮失败。
+    timed out`，一次抖动就让整个 turn 失败。这类基础设施抖动不该让整轮失败。
 
     Args:
         schema: Pydantic 模型类。
@@ -82,11 +82,11 @@ async def safe_structured(
         t0 = time.time()
         try:
             r = await get_model().with_structured_output(schema).ainvoke(prompt)
-            # `None` 也算失败：`with_structured_output` 在模型吐了空的时候可能返回 `None`
-            # 而不抛 —— 那样调用方下一行直接 AttributeError、整轮炸，而这条路上
-            # `safe_structured` 的全部意义就是"别让一次抖动炸掉整轮"。
+            # `None` 也算失败：`with_structured_output` 在模型返回空的时候可能返回 `None`
+            # 而不抛 —— 那样调用方下一行直接 AttributeError、整轮失败，而这条路上
+            # `safe_structured` 的全部意义就是"别让一次抖动导致整轮失败"。
             if r is None:
-                raise ValueError("结构化输出返回了 None（模型吐了空）")
+                raise ValueError("结构化输出返回了 None（模型返回了空）")
             if log_response:
                 trace.block(f"RESPONSE（{time.time() - t0:.1f}s）", str(r), kind="llm_io")
             return r

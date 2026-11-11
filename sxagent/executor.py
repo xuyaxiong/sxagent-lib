@@ -63,15 +63,11 @@ _PLATFORM_RULE = (
 MAX_REACT_ROUNDS = 3
 
 #: 一整趟的墙钟上限（秒）。单次调用由 `MODEL_TIMEOUT_S` 兜，但那是一次调用的界，叠起来最坏
-#: 能拖到几十分钟。它在轮次边界查，拦不住一次阻塞调用，两条一起才是完整的闸门。
+#: 能拖到几十分钟。它在轮次边界查，拦不住一次阻塞调用，两条一起才拦得住。
 MAX_WALL_S = 600
 
 #: 每次 `run_task` 一个递增编号，日志里用来分清哪一行属于哪一次。
 _RUN_SEQ = itertools.count(1)
-
-
-#: 出口三态 —— 词汇表在 `sxagent/handoff`，这里再导出一次只是为了不打断既有引用。
-OutcomeStatus = _OutcomeStatus
 
 
 @dataclass
@@ -252,7 +248,7 @@ def _open_run(skill: Skill, briefing: str, user_turns: list[dict] | None) -> tup
 
 
 def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str) -> None:
-    """记一次「这一轮没跑成」，三处（墙钟 / 流式抛异常 / 流一步都没吐）共用。
+    """记一次「这一轮没跑成」，三处（墙钟 / 流式抛异常 / 流一步都没输出）共用。
 
     `fault` / `fault_kind` / `rounds` 三个字段同生共死，漏写一个就是"有原因但没有类"，
     四处引导句会退回默认说法——把"换措辞"说成"原样再派"。所以 `kind` 是必填位置参数。
@@ -289,7 +285,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
                                               f"执行器·{run.skill.name}", role=trace.EXECUTOR):
             resp = chunk
     except Exception as e:  # noqa: BLE001
-        # 抖动不炸整轮：`stream_agent` 内部已重试过一次，两次都失败才走到这。这一轮记成
+        # 一次抖动不至于让整轮失败：`stream_agent` 内部已重试过一次，两次都失败才走到这。这一轮记成
         # 平台故障（不是执行器干不了），决定权交回主 agent。不在这里重跑：一轮 60–120 秒。
         # 故障分类从结构取：4xx（除 408/429）是确定性拒绝，据此说"换措辞"而不是"原样再派"。
         _kind: FaultKind = "rejected" if stream.upstream_rejected(e) else "transient"
@@ -304,11 +300,11 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
         _record_fault(run, round_i + 1, f"{type(e).__name__}: {e}", _kind, _note)
         return None
     if not resp:
-        # 流一步都没吐 → 按同一套故障处置：这一轮没跑成，交回主 agent
+        # 流一步都没输出 → 按同一套故障处置：这一轮没跑成，交回主 agent
         # （主 agent 那边有同类兜底）。
         _record_fault(
-            run, round_i + 1, "流式一步都没吐（stream 为空）", "transient",
-            f"⚠️ {_at(run.run_id, round_i + 1)}**流式一步都没吐** → 这一轮没跑成，"
+            run, round_i + 1, "流式一步都没输出（stream 为空）", "transient",
+            f"⚠️ {_at(run.run_id, round_i + 1)}**流式一步都没输出** → 这一轮没跑成，"
             f"交回主 agent（同平台故障处置）",
         )
         return None
