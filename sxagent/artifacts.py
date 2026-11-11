@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from langchain.tools import tool
 
@@ -54,41 +55,118 @@ def artifact_slug(s: str, n: int = 40) -> str:
 # 对外只有函数、不给 dict：换实现只动这个文件，调用方只认下面这几个函数。
 
 
-def get(aid: str) -> dict[str, str] | None:
-    """按 ID 取产物记录（含正文）；没有就 None。
+@runtime_checkable
+class ArtifactStore(Protocol):
+    """产物放哪 —— 库只认这几个方法，宿主可以用 OSS、数据库或别的什么实现它。
 
-    返回的是记录本身（不复制）—— 读没问题；写请走 `store_artifact`。
+    ## 不变量
+
+    1. `put` 返回那一刻，东西就得真的在："已写入产物 art_001"必须指得到。
+    2. ID 由**库**发（`art_001` 这种短形状，模型要照着抄），只在**本会话内**唯一 ——
+       一个实现服务多个会话时，自己按会话分前缀（OSS 分目录、数据库带 thread_id）。
+    3. 记录里有 `title` / `summary` / `content` / `type` / `ext` / `file`，落了盘再补 `path`。
+       `where()` 给**裸值**（本地路径或 URL），怎么排版是库的事。
     """
-    return session.current().artifacts.get(aid)
+
+    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+        """存一条产物。ID 由调用方（库）发好传进来。"""
+
+    def get(self, aid: str) -> dict[str, str] | None:
+        """按 ID 取记录（含正文）；没有就 None。"""
+
+    def has(self, aid: str) -> bool:
+        """这条在不在库里（"在不在"与"内容是什么"是两个问题）。"""
+
+    def items(self) -> list[tuple[str, dict[str, str]]]:
+        """（ID, 记录）的快照 —— 遍历用，加进来的新产物不会中途冒出来。"""
+
+    def where(self, aid: str) -> str:
+        """它在哪（本地路径 / URL）；没有落盘就是空串。"""
+
+    def clear(self) -> None:
+        """清空 —— 跑批每个 case 开始前调它。"""
+
+
+class MemoryArtifacts:
+    """库自带的产物库：内存表 + 本地落盘。
+
+    数据挂在**会话**上（`session.current()`），所以这个实例本身无状态 —— 多会话共用一个实例
+    也不会串，各是各的。
+    """
+
+    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+        ext = file_ext(file_type)
+        rec: dict[str, str] = {
+            "title": title,
+            "summary": summary,
+            "content": content,
+            "type": file_type,
+            "ext": ext,
+            "file": f"{aid}_{artifact_slug(title)}{ext}",
+        }
+        _dir = session.current().artifact_dir
+        if _dir is not None:
+            _dir.mkdir(parents=True, exist_ok=True)
+            p = _dir / rec["file"]
+            # 落盘 = 库里那份，一字不加：正文就是正文，"这是哪一份"由文件名承载。
+            p.write_text(rec["content"], encoding="utf-8")
+            rec["path"] = str(p)
+        session.current().artifacts[aid] = rec
+
+    def get(self, aid: str) -> dict[str, str] | None:
+        """返回的是记录本身（不复制）—— 读没问题；写请走 `put`。"""
+        return session.current().artifacts.get(aid)
+
+    def has(self, aid: str) -> bool:
+        return aid in session.current().artifacts
+
+    def items(self) -> list[tuple[str, dict[str, str]]]:
+        return list(session.current().artifacts.items())
+
+    def where(self, aid: str) -> str:
+        rec = session.current().artifacts.get(aid)
+        return (rec or {}).get("path", "")
+
+    def clear(self) -> None:
+        session.current().artifacts.clear()
+
+
+#: 库自带的那个实现 —— 入口不注入的话，一切都走它。
+DEFAULT_STORE: ArtifactStore = MemoryArtifacts()
+
+
+def get(aid: str) -> dict[str, str] | None:
+    """按 ID 取产物记录（含正文）；没有就 None。"""
+    return DEFAULT_STORE.get(aid)
 
 
 def has(aid: str) -> bool:
-    """这条产物在不在库里（"在不在"与"内容是什么"是两个问题，分开问）。"""
-    return aid in session.current().artifacts
+    """这条产物在不在库里。"""
+    return DEFAULT_STORE.has(aid)
 
 
 def ids() -> list[str]:
     """全部产物 ID（顺序 = 写入顺序）。"""
-    return list(session.current().artifacts)
+    return [aid for aid, _ in DEFAULT_STORE.items()]
 
 
 def items() -> list[tuple[str, dict[str, str]]]:
-    """（ID, 记录）的快照 —— 遍历用，加进来的新产物不会中途冒出来。"""
-    return list(session.current().artifacts.items())
+    """（ID, 记录）的快照。"""
+    return DEFAULT_STORE.items()
 
 
 def count() -> int:
-    return len(session.current().artifacts)
+    return len(DEFAULT_STORE.items())
 
 
 def chars() -> int:
     """产物库正文合计字数 —— 隔离效果的读数之一（`snapshot` / `__main__` 用它）。"""
-    return sum(len(a["content"]) for a in session.current().artifacts.values())
+    return sum(len(a["content"]) for _, a in DEFAULT_STORE.items())
 
 
 def clear() -> None:
     """清空 —— 跑批每个 case 开始前调它（`app.runtime.install`）。"""
-    session.current().artifacts.clear()
+    DEFAULT_STORE.clear()
 
 
 # 产物 ID 走 `Session.artifact_seq` 的发号器。用 `len(表) + 1` 有窗口：两个执行器会拿到
@@ -108,33 +186,17 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
     """把产物落进产物库，返回产物 ID。顺手落盘（设了落盘目录的话）。
 
     当场落盘：产物是交付物，用户当场就要能打开 —— "已写入产物 art_001"必须指得到文件。
-    记录里带 `type`（声明的类型）/ `ext`（扩展名）/ `path`（真实路径）—— 产物不只是正文，
-    后面还要有代码按类型处理它。
+    发号在这儿、不在实现里：ID 是模型要照着抄的东西，形状得库说了算。
     """
     aid = f"art_{next(session.current().artifact_seq):03d}"
-    ext = file_ext(file_type)
-    rec: dict[str, str] = {
-        "title": title,
-        "summary": summary,
-        "content": content,
-        "type": file_type,
-        "ext": ext,
-        "file": f"{aid}_{artifact_slug(title)}{ext}",
-    }
-    _dir = session.current().artifact_dir
-    if _dir is not None:
-        _dir.mkdir(parents=True, exist_ok=True)
-        p = _dir / rec["file"]
-        # 落盘 = 库里那份，一字不加：正文就是正文，"这是哪一份"由文件名承载。
-        p.write_text(rec["content"], encoding="utf-8")
-        rec["path"] = str(p)
-    session.current().artifacts[aid] = rec
+    DEFAULT_STORE.put(aid, title, summary, file_type, content)
     # 落盘那一刻说一声。写产物是全程最长的一段静默："开始"和"进度"由传输层报，
-    # "结束"必须由这里报 —— 只有本模块认识"产物"这个概念。
-    # 报的是结构事实（ID / 标题 / 字数 / 路径），不是从正文里读的。
+    # "结束"必须由这里报 —— 报的是结构事实（ID / 标题 / 字数 / 在哪），不是从正文里读的。
+    # 放在这儿而不是实现里：换一个产物库（OSS），这条日志照样得出现。
+    where = DEFAULT_STORE.where(aid)
     trace.note(
         f"✅ 产物落盘 · {aid}《{title}》（{len(content)} 字）"
-        + (f" → {rec['path']}" if rec.get("path") else "（本次只进内存，没落盘）"),
+        + (f" → {where}" if where else "（本次只进内存，没落盘）"),
         kind="artifact",
     )
     return aid
