@@ -101,7 +101,7 @@ _NEXT_FAULT_UNCLASSIFIED = (
 _FAULT_SECTION: dict[str, str] = {
     "transient": (
         "这一轮**根本没跑成**：{detail}\n"
-        "平台侧的基础设施抖动，**重试过一次仍然失败** —— 不是任务本身的问题，"
+        "平台侧的基础设施抖动 —— 不是任务本身的问题，"
         "也不是执行器没干成。\n"
         "**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）。"
     ),
@@ -128,7 +128,7 @@ _FAULT_SECTION_UNCLASSIFIED = (
 
 #: `delegate` 那条 trace note 的三类写法，住这里是为了和上面几处同表。
 NOTE_BY_FAULT: dict[str, str] = {
-    "transient": "**平台故障**（重试过仍失败）→ 没跑成",
+    "transient": "**平台故障** → 没跑成",
     "rejected": "**上游拒绝了这次请求**（4xx）→ 没跑成（原样重发会再被拒）",
     "timeout": "**时间用完了**（整趟超墙钟）→ 没跑完（原样再委派可以；老超时就拆小）",
 }
@@ -178,7 +178,7 @@ def _kind_of(outcome: Outcome) -> str:
 def _deliver_line(outcome: Outcome, kind: str) -> str:
     """① 交付行：一行说清成没成、交付了几样。"""
     if kind == "fault":
-        # 三档故障三条交付行，各有各的处置：`rejected` 那档尤其不许说"重试过一次仍失败"
+        # 三档故障三条交付行，各有各的处置：`rejected` 那档尤其不许提"重试"（根本没重试）
         # （根本没重试）。跑了多久说不清就不说（没有 `wall_s`），留空比编一个数强；
         # `max(1, …)` 是为了别说出"跑到 0 分钟"（<60s 时会四舍五入到 0）。
         mins = (
@@ -262,7 +262,7 @@ def build_receipt(outcome: Outcome, *, agent_answer: str = "", note: str = "") -
     #    标注是"它说的"，而这段是平台说的。
     if outcome.fault:
         # 三档故障三段话，整段进表（头一句就不一样）。兜底不宣称任何事实 ——
-        # 对 `rejected` / `timeout` 说"重试过一次仍失败"就是假话。
+        # 对 `rejected` / `timeout` 提"重试过"就是假话 —— 重试只发生在流的第一步之前。
         section = _FAULT_SECTION.get(outcome.fault_kind, _FAULT_SECTION_UNCLASSIFIED)
         sections["fault"] = section.format(detail=outcome.fault)
 

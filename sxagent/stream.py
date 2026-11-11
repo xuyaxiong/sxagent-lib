@@ -43,7 +43,7 @@ def upstream_rejected(e: BaseException) -> bool:
 
 
 async def _stream_with_retry(graph, state, config, who: str, role: str):
-    """跑 `_stream_agent`，基础设施抖动就重试一次，仍失败才抛。
+    """跑 `_stream_agent`，基础设施抖动就重试一次（只在第一步之前），仍失败才抛。
 
     只重试"还没走完第一步"的情况：从头重跑 state 干净、副作用不干净，第一步之后抖就
     如实抛。降级不在这层，两条链怎么退化不一样；重试前发 `retry` 事件，已流出去的字不收回。

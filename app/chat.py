@@ -10,7 +10,6 @@
 `name` / `description`），但主 agent 只看得见这两个字段，全文按需 `read_skill` 取。跑完落一份
 与跑批同格式的记录，在 `runs/<tag>/` 下。"""
 
-
 from __future__ import annotations
 
 import argparse
@@ -300,7 +299,7 @@ _ROLE_BY_KIND: dict[str, str] = {
     "feed": "plat",  # 平台把用户原话投给待答任务（section）
     "retry": "plat",  # 这一轮抖动、已重试一次（stream.stream_agent）
     "stream_empty": "plat",  # 流式一步都没输出 → 退回 invoke 兜底（这一趟没有流式日志）
-    "run_fault": "exec",  # 重试过仍失败 → 这一轮没跑成（executor.run_task）
+    "run_fault": "exec",  # 这一轮没跑成 → 交回主 agent（executor.run_task）
     "ask": "exec",  # 执行器申报要信息（调了 `ask_user`）→ 这一轮结束
     "delivered": "exec",  # 执行器交付了产物 → 这一轮结束
     "writing": "exec",  # 正在写工具参数（写产物那段 —— 报"已收到 N 字"）

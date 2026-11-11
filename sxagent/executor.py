@@ -314,7 +314,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
         ):
             resp = chunk
     except Exception as e:  # noqa: BLE001
-        # 一次抖动不至于让整轮失败：`stream_agent` 内部已重试过一次，两次都失败才走到这。这一轮记成
+        # 走到这里 = 重试没救回来（重试只在第一步之前发生），或者抖动就落在第一步之后。这一轮记成
         # 平台故障（不是执行器干不了），决定权交回主 agent。不在这里重跑：一轮 60–120 秒。
         # 故障分类从结构取：4xx（除 408/429）是确定性拒绝，据此说"换措辞"而不是"原样再派"。
         _kind: FaultKind = "rejected" if stream.upstream_rejected(e) else "transient"
@@ -323,7 +323,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
             f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"
             f" —— 这一轮没跑成，交回主 agent 换措辞/改内容"
             if _kind == "rejected"
-            else f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
+            else f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（这一轮没跑成）："
             f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent"
         )
         _record_fault(run, round_i + 1, f"{type(e).__name__}: {e}", _kind, _note)
