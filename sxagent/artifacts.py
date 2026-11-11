@@ -87,7 +87,7 @@ def chars() -> int:
 
 
 def clear() -> None:
-    """清空 —— 跑批每个 case 开始前调它（`harness.install`）。"""
+    """清空 —— 跑批每个 case 开始前调它（`app.runtime.install`）。"""
     session.current().artifacts.clear()
 
 # 产物 ID 走 `Session.artifact_seq` 的发号器。用 `len(表) + 1` 有窗口：两个执行器会拿到

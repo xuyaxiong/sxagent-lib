@@ -25,7 +25,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 NAME = "sxagent"
 ENTRY = ROOT / "app" / "chat.py"
-DIST = ROOT / "dist" / NAME   # 默认落点；`--out` 可以换（上一个包还在跑时必须换）
 
 #: 随包带的只读资源 —— `skills/` 下每个包是首次运行要铺给用户的示例技能。
 #: 落点必须和 `sxagent.config.RESOURCE_ROOT` 的约定对上（冻结后 = `sys._MEIPASS`）。
@@ -119,8 +118,7 @@ def build(out_dir: Path | None = None) -> None:
     而正在运行的程序占着那个目录，会报 PermissionError（WinError 5）。
     """
     dist = out_dir or (ROOT / "dist")
-    # 落点用 `dist / NAME`（实际产物），不是模块级的 `DIST` ——
-    # 传了 `--out` 时两者不是一回事，提示和实际落点都得用这个。
+    # 落点跟着 `dist` 走（`--out` 传了就换地方）：提示和实际落点必须是同一个。
     built = dist / NAME
     # 暂存目录每次换一个名字（`_keep-1102-093512`）：固定名字会跟"上一次没放回去的暂存"
     # 撞上，而那种时候更要紧的是别覆盖它 —— 宁可多留一个目录，也不能把用户的东西盖掉。

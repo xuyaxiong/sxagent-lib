@@ -92,7 +92,7 @@ def ensure_app_dirs() -> list[str]:
     if not any(DEFAULT_SKILLS_DIR.glob(f"*/{ENTRY_NAME}")) and SEED_SKILLS_DIR.is_dir():
         n = 0
         for src in sorted(p for p in SEED_SKILLS_DIR.iterdir() if p.is_dir()):
-            # 只铺真能当技能的目录：有 `SKILL.md` 才算（`README.md` 是适配说明）
+            # 只铺真能当技能的目录：有 `SKILL.md` 才算
             if not (src / ENTRY_NAME).is_file():
                 continue
             shutil.copytree(src, DEFAULT_SKILLS_DIR / src.name, dirs_exist_ok=True)
@@ -245,8 +245,8 @@ def install(case: dict) -> dict:
     # ④′ token / 调用计数
     counter = _count_tokens()
 
-    # ⑤ 故障注入不在这里。它是测试旋钮，测试侧在 `install()` 之后往返回的这两个 dict
-    #    里写（同一个对象，所以运行记录照旧带着它们）。
+    # ⑤ 故障注入不在这里：返回的 `fault` / `stream_fault` 是留给故障注入的旋钮 —— 往这两个
+    #    dict 里写就行（同一个对象，运行记录照旧带着它们），目前还没有调用方。
     return {
         "counter": counter,
         "writes": writes,

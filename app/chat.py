@@ -6,9 +6,9 @@
 和跑批分工不同：跑批用预置的 `turns` 和断言，机器判通过率，验"稳不稳"；这里自由对话，验真实
 节奏下能不能跑通，也用来手工试新技能。
 
-技能启动时全量注入（文件夹下每个 `*.md` 一个，须有 `name` / `description` frontmatter），但
-主 agent 只看得见这两个字段，全文按需 `read_skill` 取。跑完落一份与跑批同格式的记录，在
-`runs/<tag>/` 下。"""
+技能启动时全量注入（**每个子目录是一个技能包**，入口 `SKILL.md`，frontmatter 给
+`name` / `description`），但主 agent 只看得见这两个字段，全文按需 `read_skill` 取。跑完落一份
+与跑批同格式的记录，在 `runs/<tag>/` 下。"""
 
 # ruff: noqa: T201  # 交互式入口，输出即界面
 

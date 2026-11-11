@@ -61,7 +61,8 @@ def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> st
     走唯一那条渲染路（`render_hop`）：段名 0 列 · 来源 2 列 · 段体 2 列。
     `skill_name` 跟着【任务】走 —— 它属于"这次要什么"，不单起一段，但不能丢：这一步是
     独立调用，模型手里没有 `delegate` 的工具上下文，不写它就不知道派给了谁。
-    `messages` 渲染的是 `str(m.content)`，工具调用的参数不在里面（见模块头遗留问题）。
+    `messages` 渲染的是 `str(m.content)` —— **工具调用的参数不在里面**（`AIMessage.tool_calls`
+    的 `args`：主 agent 写的 `delegate(task=…)` 全文、`read_artifact` 的 id 都看不见）。已知口子。
     """
     msgs = list(messages)
     history = "\n".join(_item(m) for m in msgs)

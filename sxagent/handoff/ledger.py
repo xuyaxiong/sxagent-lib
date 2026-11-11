@@ -49,7 +49,7 @@ _SRC = {
     "delegate": "全文见那次的回执（`delegate` 的返回）",
     "feed": "全文**不在你的上下文里** —— 这轮是平台投递你的答复后重跑的，没有回执",
 }
-#: `run_by` 缺失（比如 `case.initial_tasks` 注入的 Task）时的默认 —— fail-safe 到"没有全文"。
+#: `run_by` 缺失（比如手写 state / fixture 里注入的 Task）时的默认 —— fail-safe 到"没有全文"。
 _SRC_DEFAULT = "全文**不在你的上下文里**"
 
 

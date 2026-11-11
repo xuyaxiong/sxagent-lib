@@ -28,7 +28,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from sxagent import stream, trace
 from sxagent.config import get_model
-from sxagent.handoff import FaultKind, OutcomeStatus as _OutcomeStatus, render_hop
+from sxagent.handoff import FaultKind, OutcomeStatus, render_hop
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
 from sxagent.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
 from sxagent.handoff.nudge import nudge_text  # 推回去的模板

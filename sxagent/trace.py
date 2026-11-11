@@ -216,12 +216,6 @@ def block(label: str, text: str, *, kind: str = "", indent: str = "  ") -> None:
               "text": text, "indent": indent, "ts": stamp()})
 
 
-def kv(label: str, **fields: Any) -> None:
-    """写一行键值对（形状上是一行 note）。"""
-    inner = " | ".join(f"{k}={v}" for k, v in fields.items())
-    _publish({"type": "note", "kind": "", "text": f"{label} | {inner}", "ts": stamp()})
-
-
 def handoff(
     hop: str,
     frm: str,

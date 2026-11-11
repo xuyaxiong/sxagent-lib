@@ -30,7 +30,7 @@ Skill 是一份写好的专业能力：说明加脚本，可以反复用。Task 
 `description` / `instructions` 三个字段）和内置技能表，后者负责把磁盘上的技能文件夹读成
 `Skill`，并列出、读取它自带的文件，自己不做语义判断。`artifacts.py` 管"交付了什么"：产物
 存、取、发 ID、按类型定扩展名，落地那一刻就写盘，不管技能。`registry.py` 单独站着，只放
-技能表，对外只有 `get/all/replace/extend/reset` 五个口子，不给 dict。
+技能表：读走 `get/all/values/names/catalog`，换表那三个口子挂在 `testing` 上，不给 dict。
 
 再往上是执行。`executor.py` 跑一次任务，接受执行器申报 `ask_user`，限制循环次数，它不持有
 状态、不跨轮，也不直接问用户。`agent.py` 是主 agent，`delegate` 工具、委托单渲染、快照用户
