@@ -373,9 +373,8 @@ def _close_run(run: _Run) -> ExecOutcome:
     emit_decision(**_verdict(outcome, run.run_id))
 
     # 这行是「这次 run 的账」，不是复述：两个编号各自带名字，问题不重贴（上面已有三处）。
-    # 故障那档的说法按 `fault_kind` 取。
-    _fault_label = {"rejected": "上游拒绝了这次请求",
-                    "timeout": "时间用完了"}.get(outcome.fault_kind, "平台故障")
+    # 故障那档的说法按 `fault_kind` 取（表在模块里，守卫盯着键集合）。
+    _fault_label = FAULT_LABEL.get(outcome.fault_kind, FAULT_LABEL["transient"])
     trace.note(
         f"{run.run_id} · {run.skill.name} **结束**：status={outcome.status}"
         f"（内部 {outcome.rounds} 轮，产物 {len(outcome.artifacts)} 个，"
@@ -419,6 +418,35 @@ def _structural_status(outcome: ExecOutcome) -> str:
     return "incomplete"
 
 
+#: 三档故障在判定记录里的说法：依据（`why`）与下一步（`nxt`）。
+#: `{detail}` 是原始原因、`{wall}` 是墙钟上限，只在 `why` 里插。键 = `FaultKind`（`""` 除外）——
+#: 与 `handoff.receipt` 那几张表同形，加档要一起补。
+FAULT_VERDICT: dict[str, tuple[str, str]] = {
+    "transient": (
+        "**平台故障**（{detail}）—— 这一轮**根本没跑成**，不是执行器干不了",
+        "**交回主 agent** —— 原样再 `delegate` 一次即可（不用改措辞、不用改参数、不用问用户）",
+    ),
+    "rejected": (
+        "**上游拒绝了这次请求**（4xx，不是抖动）：{detail} —— 这一轮**根本没跑成**，"
+        "不是执行器干不了",
+        "**交回主 agent** —— **原样重发同一份内容会再被拒**：换措辞/改内容再 `delegate` 一次；"
+        "改不动就向用户说明这一段被拦了",
+    ),
+    "timeout": (
+        "**时间用完了**（跑满 {wall}s 墙钟）：{detail} —— 它**一直在干活**，只是这一趟没干完，"
+        "不是它干不了",
+        "**交回主 agent** —— 原样再 `delegate` 一次可以；**老超时就说明活太大**，拆小一点再委派",
+    ),
+}
+
+#: 三档故障在 `run_end` 那行里的短标签（`…｜**平台故障**：原因`）。
+FAULT_LABEL: dict[str, str] = {
+    "transient": "平台故障",
+    "rejected": "上游拒绝了这次请求",
+    "timeout": "时间用完了",
+}
+
+
 def _verdict_reason(outcome: ExecOutcome) -> tuple[str, str]:
     """判定的依据（`why`）与下一步（`nxt`），两格文案的唯一来源。
 
@@ -439,20 +467,9 @@ def _verdict_reason(outcome: ExecOutcome) -> tuple[str, str]:
                "换个说法**重新委派** / 向用户说明")
     if outcome.fault:
         # 故障时 status 仍是三态里的值，但这一轮根本没跑成 —— 与"执行器干不了"是两回事。
-        # 三档故障三种处置：rejected（4xx）是上游对这份内容的拒绝，"原样再派"会再被拒。
-        if outcome.fault_kind == "rejected":
-            why = (f"**上游拒绝了这次请求**（4xx，不是抖动）：{outcome.fault}"
-                   f" —— 这一轮**根本没跑成**，不是执行器干不了")
-            nxt = ("**交回主 agent** —— **原样重发同一份内容会再被拒**："
-                   "换措辞/改内容再 `delegate` 一次；改不动就向用户说明这一段被拦了")
-        elif outcome.fault_kind == "timeout":
-            why = (f"**时间用完了**（跑满 {MAX_WALL_S}s 墙钟）：{outcome.fault}"
-                   f" —— 它**一直在干活**，只是这一趟没干完，不是它干不了")
-            nxt = ("**交回主 agent** —— 原样再 `delegate` 一次可以；"
-                   "**老超时就说明活太大**，拆小一点再委派")
-        else:
-            why = f"**平台故障**（{outcome.fault}）—— 这一轮**根本没跑成**，不是执行器干不了"
-            nxt = "**交回主 agent** —— 原样再 `delegate` 一次即可（不用改措辞、不用改参数、不用问用户）"
+        # 三档的说法在 `FAULT_VERDICT` 表里，跟 `handoff.receipt` 那几张同形（守卫盯着键集合）。
+        why, nxt = FAULT_VERDICT.get(outcome.fault_kind, FAULT_VERDICT["transient"])
+        why = why.format(detail=outcome.fault, wall=MAX_WALL_S)
     return why, nxt
 
 

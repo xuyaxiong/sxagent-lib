@@ -10,20 +10,21 @@ from __future__ import annotations
 
 from typing import get_args
 
+from sxagent import executor
 from sxagent.artifacts import store_artifact
 from sxagent.executor import ExecOutcome
 from sxagent.handoff import FaultKind, ledger
 from sxagent.handoff import receipt as receipt_mod
 
-#: 按 `FaultKind` 分档的表。
-#: `executor` 里还有两处（`_verdict_reason` 的 if/elif、`_close_run` 里的局部字典），
-#: 都是私有成员、够不着 —— 要覆盖得先挪成公开的表，或者从 `run_task` 走（那要真模型）。
+#: 按 `FaultKind` 分档的全部表 —— 不变量 6 说"四处"，加 `ledger` 与 `executor` 两处共七张。
 TABLES: dict[str, dict] = {
     "receipt._DELIVER_BY_FAULT": receipt_mod._DELIVER_BY_FAULT,
     "receipt._NEXT_BY_FAULT": receipt_mod._NEXT_BY_FAULT,
     "receipt._FAULT_SECTION": receipt_mod._FAULT_SECTION,
     "receipt.NOTE_BY_FAULT": receipt_mod.NOTE_BY_FAULT,
     "ledger.FAULT_MARK": ledger.FAULT_MARK,
+    "executor.FAULT_VERDICT": executor.FAULT_VERDICT,
+    "executor.FAULT_LABEL": executor.FAULT_LABEL,
 }
 
 #: 三类故障（去掉 `""` —— 那是"没有故障"）。
@@ -32,6 +33,24 @@ KINDS = [kind for kind in get_args(FaultKind) if kind]
 
 def test_fault_tables_share_the_same_keys() -> None:
     assert {name: set(t) for name, t in TABLES.items() if set(t) != set(KINDS)} == {}
+
+
+def _cells(value: object) -> tuple:
+    """表里一格的值：字符串就一格，元组（判定记录那种）拆成几格。"""
+    return value if isinstance(value, tuple) else (value,)
+
+
+def test_each_table_reads_differently_per_kind() -> None:
+    """每张表里三档的说法两两不同 —— 漏一档走了兜底，两档就撞成同一句话。
+
+    元组的值逐格比：只抄了其中一格（比如 why 抄了、nxt 没抄）也算漏档。
+    """
+    colliding = []
+    for name, table in TABLES.items():
+        columns = [_cells(table[kind]) for kind in KINDS]
+        if any(len({col[i] for col in columns}) != len(KINDS) for i in range(len(columns[0]))):
+            colliding.append(name)
+    assert colliding == []
 
 
 def _sections(kind: str) -> tuple[str, str, str]:
