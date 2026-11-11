@@ -12,7 +12,7 @@
 | `sxagent/` | 库本体，运行期的全部逻辑都在这 |
 | `app/` | 验证用的 CLI，交互式跑真会话。内部工具，不是交付面 |
 | `skills/` | 示例技能包。一个子目录一个技能，入口是 `SKILL.md` |
-| `docs/` | `architecture.md` 讲现在长什么样，`decisions.md` 讲为什么，`evolution.md` 讲往哪走 |
+| `docs/` | `architecture.md` 讲现在长什么样，`decisions.md` 讲为什么，`evolution.md` 讲往哪走，`principles.md` 讲怎么干活，`conventions.md` 讲提交、分支和编码规范 |
 | `build_cli.py` | 把验证 CLI 打包成独立程序，发给没装 Python 的测试者 |
 
 ## 跑起来
