@@ -429,6 +429,7 @@ _RECEIPT_KINDS: dict[str, str] = {
 _TOOL_SOURCE: dict[str, str] = {
     "delegate": "平台（`delegate` 的回执：**平台的框架话 + 执行器的原话**拼在一起）",
     "read_skill": "平台（技能原文 —— 主 agent 主动读的，渐进式披露第二层）",
+    "read_skill_file": "技能包（技能自带文件的全文 —— 渐进式披露第三层）",
     "read_artifact": "产物库（**产物正文全文**）",
     "write_artifact": "产物库（写入回执）",
     "list_artifacts": "产物库（清单，不含正文）",
@@ -461,11 +462,17 @@ def _injected_label(tag: str | None) -> str:
 
 
 def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
-    """回执对象 → 哪一段、写了什么。读对象，不读文本。"""
+    """回执对象 → 哪一段、写了什么。读对象，不读文本。
+
+    "这条回执是不是派发被拒"由 `handoff.receipt` 判（拒绝口那张表在它那儿）：这里不按前缀
+    近似 —— 前缀认得出表外的 kind，认出来了也是错的。
+    """
     from sxagent.handoff import HOPS
+    from sxagent.handoff.receipt import is_rejection
 
     sections = handoff.get("sections") or {}
-    keys = HOPS["receipt_rejected"] if handoff.get("kind", "").startswith("rejected_") else HOPS["receipt"]
+    keys = (HOPS["receipt_rejected"] if is_rejection(str(handoff.get("kind") or ""))
+            else HOPS["receipt"])
     return [(_RECEIPT_LABEL.get(k, k), sections[k]) for k in keys if sections.get(k)]
 
 
@@ -593,16 +600,20 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
         f"<sub>来源：{_TOOL_SOURCE.get(tool, '平台')}</sub>",
         "",
     ]
-    if tool in ("read_artifact", "read_skill"):
-        # 正文和原文不进日志，只写读了啥、谁读的：产物落盘在 `art_*`，
-        # 技能原文在 `skills/`，都另有出处。
-        what = "产物" if tool == "read_artifact" else "技能"
-        key = "artifact_id" if tool == "read_artifact" else "skill_name"
+    if tool in ("read_artifact", "read_skill", "read_skill_file"):
+        # 正文和原文不进日志，只写读了啥、谁读的：产物落盘在 `art_*`，技能原文在 `skills/`，
+        # 都另有出处。三个读工具各写各的"读了啥"——读技能文件时，路径比技能名更该记。
+        if tool == "read_artifact":
+            what, where = f"产物 `{target.get('artifact_id', '?')}`", "见同目录 `art_*` 落盘文件"
+        elif tool == "read_skill":
+            what, where = f"技能 `{target.get('skill_name', '?')}`", "见 `skills/`"
+        else:
+            what = (f"技能文件 `{target.get('skill_name', '?')}"
+                    f"/{target.get('path', '?')}`")
+            where = "见 `skills/`"
         out += [
-            f"　**主 agent 读了{what} `{target.get(key, '?')}` 的全文**"
-            f"（{len(content)} 字，原文不在这里复述 —— "
-            + ("见同目录 `art_*` 落盘文件" if tool == "read_artifact" else "见 `skills/`")
-            + "）",
+            f"　**主 agent 读了{what} 的全文**"
+            f"（{len(content)} 字，原文不在这里复述 —— {where}）",
             "",
         ]
         return out, n
@@ -756,7 +767,16 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
         "",
     ]
     if result.get("error"):
-        lines += ["## ⚠️ 整轮炸掉", "```", result["error"][:3000], "```", ""]
+        err = result["error"]
+        cut = len(err) - 3000
+        lines += [
+            "## ⚠️ 这次运行没跑成",
+            "```",
+            err[:3000] + (f"\n…（**平台截断：还有 {cut} 字未显示**，全文见同目录 `results.json`）"
+                          if cut > 0 else ""),
+            "```",
+            "",
+        ]
     for _i, t in enumerate(result["turns"]):
         lines += _turn_header(result["turns"], _i, t)
         # ── 本轮全部消息，按发生顺序（用户输入 / 平台注入 / AI 输出 / 工具调用与返回）──

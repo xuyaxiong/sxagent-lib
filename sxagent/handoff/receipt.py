@@ -288,6 +288,15 @@ def available_key(kind: str) -> str:
     return _REJECTED_AVAILABLE[kind]
 
 
+def is_rejection(kind: str) -> bool:
+    """这个 kind 是不是派发被拒 —— 上面那张表的键就是全部。
+
+    别处要问"是不是拒绝口"就调它，不要按 `rejected_` 前缀近似：前缀认得出表外的 kind，
+    认出来了也是错的。
+    """
+    return kind in _REJECTED_AVAILABLE
+
+
 # ──────────────────────────── 渲染：注入前那一瞬才拼 ────────────────────────────
 
 
@@ -296,5 +305,5 @@ def render_receipt(receipt: Receipt) -> str:
     # 渲染收敛到 `handoff.render_hop`（所有交接单共用一条路），这里只负责挑"这一跳是哪
     # 一组段"（派发被拒那条走 `receipt_rejected`）。排版是共用规矩 —— 顶在 0 列时，
     # 执行器的原话和平台框架话左边界一模一样。
-    hop = "receipt_rejected" if receipt.get("kind") in _REJECTED_AVAILABLE else "receipt"
+    hop = "receipt_rejected" if is_rejection(str(receipt.get("kind") or "")) else "receipt"
     return render_hop(hop, receipt.get("sections") or {})

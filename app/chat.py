@@ -725,7 +725,10 @@ def _session(s: _Session) -> None:
         import traceback
 
         s.error = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
-        print(f"\n⚠️ 炸了：{s.error[:500]}")
+        cut = len(s.error) - 500
+        print(f"\n⚠️ **会话中断**（平台故障）：{s.error[:500]}"
+              + (f"\n（**平台截断：还有 {cut} 字未显示**，全文见 {s.out_dir / 'results.json'}）"
+                 if cut > 0 else ""))
 
 
 def _finish(s: _Session) -> None:
