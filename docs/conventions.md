@@ -72,6 +72,18 @@ git tag v0.1
 `pyproject.toml` 里的 `version` 用 PEP 440 三段式（`0.1.0`），git tag 用 `v0.1`，
 两者独立管理。
 
+### 发布清单
+
+发布前逐条过，缺一条都不发：
+
+- `uv run ruff check .` 零告警、`uv run pytest` 全绿；
+- 单轮冒烟真跑一次：`uv run python -m sxagent --say "你好"`（走真模型）；
+- `uv run python scripts/wheel_check.py` —— 构建、验 wheel 里只有 `sxagent/`、wheel 和 sdist
+  各装进一个干净 venv 用公共 API 跑通一轮（要网络，几十秒）；
+- CLI 那半：`uv run python build_cli.py`，产物在一台没装 Python 的机器上真跑一遍；
+- 换过模型/端点的，先按 `evolution.md` 的「换模型这条是硬的」重跑端到端；
+- 打 tag、把 `dev` 推到 `main`（上面那三行）。
+
 ## 编码
 
 ### 动手之前

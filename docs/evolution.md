@@ -83,5 +83,8 @@
 
 ## 近期
 
-接下来是发布门禁：license、起始版本号、remote 放哪。另一件小的：`scripts/text_audit.py` 自己
-还没有用例，得有测试盯着它真能抓到"改注释时顺手动了代码"。
+打包与发布路径已就位：`pyproject.toml` 能出 sdist ＋ wheel，`conventions.md` 有发布清单，
+`scripts/wheel_check.py` 是那条门禁（构建 → 验产物 → 装进干净 venv 跑一轮）。剩下要定的是
+license 和分发方式（远程仓 / 私有 index）——定了就可以把库接进 `sx-agent`。
+另一件小的：`scripts/text_audit.py` 自己还没有用例，得有测试盯着它真能抓到"改注释时顺手动了
+代码"。
