@@ -38,12 +38,26 @@ def install_recorder(*, record: Callable[[dict], None], write: Callable[[str], N
     _sink_record, _sink_write = record, write
 
 
-def stamp() -> str:
-    """日志时间戳：年月日 + 毫秒。
+def stamp() -> datetime:
+    """这一条事件的时间戳 —— 带的是结构（`datetime`），不是渲染好的字符串。
+
+    显示成什么样由各视图自己渲染（`fmt_ts` / `fmt_clock`）：视图要是去切字符串，改一次格式
+    就静默切错，而且没人知道它切错了。
+    """
+    return datetime.now()
+
+
+def fmt_ts(t: datetime) -> str:
+    """日志文件里的时间戳：年月日 + 毫秒。
 
     一轮里同一秒发生好几件事（工具调用 → 返回 → 判定），秒级看不出先后；跨天也分不清日子。
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    return t.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def fmt_clock(t: datetime) -> str:
+    """终端 gutter 里的时间：只有时分秒 + 毫秒 —— 日期在屏幕上没用。"""
+    return t.strftime("%H:%M:%S.%f")[:-3]
 
 
 # ──────────────────────────── 事件总线 ────────────────────────────
@@ -120,11 +134,11 @@ def _mark_hole(ev: dict, e: Exception) -> None:
         return
     try:
         _sink_write(
-            f"[{stamp()}] ⚠️ **这一条没有落进日志**（记录器渲染失败）："
+            f"[{fmt_ts(stamp())}] ⚠️ **这一条没有落进日志**（记录器渲染失败）："
             f"type={ev.get('type')!r} kind={ev.get('kind')!r}"
             f" —— {type(e).__name__}: {e}"
         )
-    except Exception:  # noqa: BLE001 —— 连标洞都写不进去，只能放弃；仍不炸业务
+    except Exception:  # noqa: BLE001 —— 连标洞都写不进去，只能放弃；仍不影响业务
         pass
 
 

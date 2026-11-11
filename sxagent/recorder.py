@@ -119,38 +119,39 @@ def record(ev: dict) -> None:
     日志是权威记录：老日志、`_run.md` 附录、人的翻阅习惯都不能断，所以格式固定。
     由总线调（`trace._publish`），不是订阅者。
     """
-    ts = ev["ts"]
+    ts = ev["ts"]                      # 结构（`datetime`）：嵌套事件要原样往下传
+    head = f"[{trace.fmt_ts(ts)}]"     # 日志行的前缀 —— 渲染成什么样是这一层的事
     t = ev["type"]
     if t == "section":
         write()
-        write(f"{BAR}\n[{ts}] {ev['title']}\n{BAR}")
+        write(f"{BAR}\n{head} {ev['title']}\n{BAR}")
     elif t == "note":
-        write(f"[{ts}] {_NOTE_HEAD.get(ev.get('kind') or '', '')}{ev['text']}")
+        write(f"{head} {_NOTE_HEAD.get(ev.get('kind') or '', '')}{ev['text']}")
     elif t == "block":
-        write(f"[{ts}] {ev['label']}:")
+        write(f"{head} {ev['label']}:")
         for line in str(ev["text"]).splitlines() or [""]:
             write(f"{ev['indent']}{line}")
     elif t == "stream":
-        write(f"[{ts}] {_STREAM_MARK}{ev['who']}⟩ {ev['text']}")
+        write(f"{head} {_STREAM_MARK}{ev['who']}⟩ {ev['text']}")
     elif t == "handoff":
-        write(f"[{ts}] 📤 交接 · {ev['hop']}（{ev['frm']} → {ev['to']}）：{len(ev['text'])} 字"
+        write(f"{head} 📤 交接 · {ev['hop']}（{ev['frm']} → {ev['to']}）：{len(ev['text'])} 字"
               f"｜结构化：{ev['structured'] or '（纯文本）'}")
         if ev["full"]:
             record({"type": "block", "label": f"交接全文 · {ev['hop']}",
                     "text": ev["text"], "indent": "  ", "ts": ts})
     elif t == "cut":
-        write(f"[{ts}] ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
+        write(f"{head} ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
               + (f"｜{ev['see']}" if ev.get("see") else ""))
     elif t == "dump":
         messages = ev["messages"]
-        write(f"[{ts}] {ev['tag']} 消息轨迹（{len(messages)} 条）:")
+        write(f"{head} {ev['tag']} 消息轨迹（{len(messages)} 条）:")
         for i, m in enumerate(messages):
             write(f"  [{i}] {trace.render_message(m)}")
     elif t == "decision":
         # 走唯一那条渲染路：这里只加文件格式的东西（时间戳前缀、段头），
         # 排版归 `render_decision()`。
         body = "\n".join(f"{_DEC}{ln}" for ln in render_decision(ev).splitlines())
-        write(f"[{ts}] {_DECISION_HEAD} · {ev['who']}\n{body}")
+        write(f"{head} {_DECISION_HEAD} · {ev['who']}\n{body}")
 
 
 # 装上 —— 总线留的是槽，谁 import 本模块谁就装上。忘了 import = 日志静默没有，

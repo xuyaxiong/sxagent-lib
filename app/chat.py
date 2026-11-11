@@ -24,6 +24,7 @@ import sys
 import time
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
@@ -167,7 +168,8 @@ def _dw(s: str) -> int:
 
 #: 正文层（亮色）只有"人和主 agent 的对话"，其余都是机制层（暗灰），靠颜色分、左边对齐。
 _LABEL_W = 12   # gutter 里标签的宽度（最长的 EXECUTOR/PLATFORM 是 11 列）
-_TS = "[00:00:00.000] "   # gutter 宽度占位，日期不出现在显示层
+#: gutter 里时间那段的列数 —— 按 `trace.fmt_clock` 的真实宽度算，改格式不用回来改这里。
+_TS = f"[{trace.fmt_clock(trace.stamp())}] "
 
 #: 读全文的工具：返回一个字都不贴，只报"读了多大一份、原文在哪"。判据是全文另有出处——
 #: "另有出处"的正文贴一段，既不是全文也不是摘要，只是噪音。其余一律照原样贴、不截：
@@ -198,14 +200,6 @@ def paint(s: str, color: str = "") -> str:
     return f"{color}{s}\033[0m" if (_COLOR and color) else s
 
 
-def _short_ts(stamp: str) -> str:
-    """`2026-10-30 17:03:48.301` → `17:03:48.301`，只改显示。
-
-    trace 日志和 `_run.md` 里仍是完整时间戳，跨天要能分。
-    """
-    return stamp[11:] if len(stamp) >= 19 and stamp[10] == " " else stamp
-
-
 def _gutter_prompt(role: str) -> str:
     """提示符本身就是那行 gutter：`[时间] 标签 ┃ `，打的字接在后面，天然是一行。
 
@@ -213,7 +207,7 @@ def _gutter_prompt(role: str) -> str:
     """
     icon, _color = _STYLE[role]
     pad = " " * max(0, _LABEL_W - _dw(icon))
-    return f"[{_short_ts(trace.stamp())}] {icon}{pad}┃ "
+    return f"[{trace.fmt_clock(trace.stamp())}] {icon}{pad}┃ "
 
 
 #: 折行的最小单位：英文词、标识符、`` `代码段` `` 各是一整块，其余逐字。不能逐字符折——
@@ -268,7 +262,7 @@ def _cap_line(text: str) -> str:
     return text[:_LIVE_CAP] + f"（**平台截断：还有 {len(text) - _LIVE_CAP} 字未显示**）"
 
 
-def _emit(role: str, text: str, stamp: str | None = None, *, cap: bool = False) -> None:
+def _emit(role: str, text: str, stamp: datetime | None = None, *, cap: bool = False) -> None:
     """按统一版式打一条：`[时间] 标签 ┃ 内容`，续行对齐到 `┃`。
 
     两层靠颜色分，不靠缩进：正文层亮色、机制层暗灰，左边一律对齐。
@@ -277,7 +271,7 @@ def _emit(role: str, text: str, stamp: str | None = None, *, cap: bool = False) 
     if cap:
         text = _cap_line(text)
     icon, color = _STYLE[role]
-    stamp = _short_ts(stamp or trace.stamp())
+    stamp = trace.fmt_clock(stamp or trace.stamp())
     pad = " " * max(0, _LABEL_W - _dw(icon))
     head = f"[{stamp}] {icon}{pad}┃ "
     indent = _dw(_TS) + _LABEL_W
