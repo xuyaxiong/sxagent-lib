@@ -40,7 +40,7 @@ FAULT_MARK: dict[str, str] = {
     "transient": "⚠️ 平台故障（这一轮**没跑成** —— 原样再委派一次即可）",
     "rejected": "⚠️ 上游**拒绝了这次请求**（原样重发会再被拒 —— **换措辞/改内容**再委派）",
     "timeout": "⚠️ **时间用完了**（这一趟没跑完就被叫停 —— 原样再委派可以；"
-               "**老超时就说明活太大**，拆小一点再委派）",
+    "**老超时就说明活太大**，拆小一点再委派）",
 }
 
 
@@ -81,9 +81,11 @@ def render_ledger(tasks: list[Task]) -> str:
         # 平台故障压过 stage 标记（见 `FAULT_MARK`），标记按故障的类选；
         # 取不到 kind 回落 `transient`（保守）。
         faulted = bool(t.get("fault"))
-        mark = (FAULT_MARK.get(str(t.get("fault_kind") or ""), FAULT_MARK["transient"])
-                if faulted
-                else STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?")))
+        mark = (
+            FAULT_MARK.get(str(t.get("fault_kind") or ""), FAULT_MARK["transient"])
+            if faulted
+            else STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?"))
+        )
         arts = f" → {', '.join(t['artifacts'])}" if t.get("artifacts") else ""
         body.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}")
         # 没完成的任务，把执行器原话也带上 —— 只说"没完成"，主 agent 没法决定怎么处置。

@@ -28,17 +28,21 @@ from langchain.tools import tool
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from sxagent import stream, trace
+from sxagent.artifacts import (
+    make_write_artifact,
+    read_artifact,
+)
 from sxagent.config import get_model
 from sxagent.handoff import FaultKind, OutcomeStatus, render_hop
 from sxagent.handoff.briefing import Turn  # 用户原话快照的形状
+
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
 from sxagent.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
 from sxagent.handoff.nudge import nudge_text  # 推回去的模板
-from sxagent.artifacts import (
-    read_artifact,
-    make_write_artifact,
+from sxagent.skill_pack import (  # 技能包文件（磁盘）＋ 提示块（单源）
+    read_skill_file,
+    skill_file_prompt,
 )
-from sxagent.skill_pack import read_skill_file, skill_file_prompt  # 技能包文件（磁盘）＋ 提示块（单源）
 from sxagent.skills import Skill  # 技能领域
 
 if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
@@ -122,9 +126,11 @@ def make_ask_user(asked: dict[str, str]):
         asked["question"] = str(question or "").strip()
         # 说的是「这一次登记了什么」，不是流程说明：先说刚发生的那件事，再用「接下来」
         # 交代后手。这行只是记录 —— `run_task` 看到 `asked` 就 break，它回不到执行器眼里。
-        return ("**已登记为待答** —— 这一轮到此结束。"
-                "接下来：平台先让主 agent 试答（它上下文里可能就有），"
-                "答不上才把你这句**原话**转给用户。")
+        return (
+            "**已登记为待答** —— 这一轮到此结束。"
+            "接下来：平台先让主 agent 试答（它上下文里可能就有），"
+            "答不上才把你这句**原话**转给用户。"
+        )
 
     return ask_user
 
@@ -192,8 +198,7 @@ class _Run:
     asked: dict[str, str]
 
 
-def _build_executor(user_turns: list[Turn] | None,
-                    created: list[str], asked: dict[str, str]):
+def _build_executor(user_turns: list[Turn] | None, created: list[str], asked: dict[str, str]):
     """建执行器那个子 agent：工具表加平台规则。
 
     `created` / `asked` 是工具闭包，两者得绑在同一份闭包上。
@@ -227,31 +232,44 @@ def _open_run(
     # 与 `read_skill` 工具返回同一份（单源 `skill_file_prompt`），没有自带文件就返回空串。
     refs = skill_file_prompt(skill.name)
     # 走唯一那条渲染路：交接书整块缩在【已知信息】下面，哪几段属于它一眼看得出。
-    task_text = render_hop("task_text", {
-        "skill_instructions": f"{skill.instructions}{refs}",
-        "known": briefing_text,
-    })
+    task_text = render_hop(
+        "task_text",
+        {
+            "skill_instructions": f"{skill.instructions}{refs}",
+            "known": briefing_text,
+        },
+    )
 
     run_id = f"R{next(_RUN_SEQ):02d}"
-    trace.section(f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）",
-                  kind="run_begin")
+    trace.section(
+        f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）", kind="run_begin"
+    )
     # 技能指令按名引用、不逐字复述：原文是静态资产、另有落盘文件，日志留的是交接内容。
     trace.handoff("交接书", "平台", "执行器", briefing_text, structured="Task → render_briefing")
     trace.block(
         "发给执行器的内容（技能指令按名引用）",
         # 走同一个 `render_hop`：两处拼形状必然漂。`skill_instructions` 是简写，`known` 与
         # 真发出去的逐字相同；简写里不带段名 —— 段名只有 `render_hop` 一处加。
-        render_hop("task_text", {
-            "skill_instructions": f"{skill.name}"
-                                  f"（instructions {len(skill.instructions)} 字，"
-                                  f"原文见该技能包的 SKILL.md）",
-            "known": briefing_text,
-        }),
+        render_hop(
+            "task_text",
+            {
+                "skill_instructions": f"{skill.name}"
+                f"（instructions {len(skill.instructions)} 字，"
+                f"原文见该技能包的 SKILL.md）",
+                "known": briefing_text,
+            },
+        ),
         kind="executor_briefing",
     )
-    return _Run(skill=skill, run_id=run_id, t0=time.time(),
-                messages=[HumanMessage(task_text)], outcome=ExecOutcome(),
-                created=created, asked=asked), agent
+    return _Run(
+        skill=skill,
+        run_id=run_id,
+        t0=time.time(),
+        messages=[HumanMessage(task_text)],
+        outcome=ExecOutcome(),
+        created=created,
+        asked=asked,
+    ), agent
 
 
 def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str) -> None:
@@ -279,7 +297,10 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
     # 它一直在干活，只是没干完（`timeout` 那档）。
     if time.time() - run.t0 > MAX_WALL_S:
         _record_fault(
-            run, round_i, f"整趟超过墙钟上限（{MAX_WALL_S}s）", "timeout",
+            run,
+            round_i,
+            f"整趟超过墙钟上限（{MAX_WALL_S}s）",
+            "timeout",
             f"⚠️ {run.run_id} **时间用完了**（已跑 {time.time() - run.t0:.0f}s > 上限 {MAX_WALL_S}s）"
             f" → 不再开新一轮，交回主 agent（原样再委派可以；老超时就拆小）",
         )
@@ -288,8 +309,9 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
     # 几十秒不再黑屏。`who` 带技能名：多个执行器并行时流式行会交错，得能分辨是谁。
     resp = {}
     try:
-        async for chunk in stream.stream_agent(agent, {"messages": run.messages}, None,
-                                              f"执行器·{run.skill.name}", role=trace.EXECUTOR):
+        async for chunk in stream.stream_agent(
+            agent, {"messages": run.messages}, None, f"执行器·{run.skill.name}", role=trace.EXECUTOR
+        ):
             resp = chunk
     except Exception as e:  # noqa: BLE001
         # 一次抖动不至于让整轮失败：`stream_agent` 内部已重试过一次，两次都失败才走到这。这一轮记成
@@ -300,8 +322,8 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
             f"⚠️ {_at(run.run_id, round_i + 1)}**上游拒绝了这次请求**（4xx，未重试 ——"
             f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"
             f" —— 这一轮没跑成，交回主 agent 换措辞/改内容"
-            if _kind == "rejected" else
-            f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
+            if _kind == "rejected"
+            else f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
             f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent"
         )
         _record_fault(run, round_i + 1, f"{type(e).__name__}: {e}", _kind, _note)
@@ -310,13 +332,15 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
         # 流一步都没输出 → 按同一套故障处置：这一轮没跑成，交回主 agent
         # （主 agent 那边有同类兜底）。
         _record_fault(
-            run, round_i + 1, "流式一步都没输出（stream 为空）", "transient",
+            run,
+            round_i + 1,
+            "流式一步都没输出（stream 为空）",
+            "transient",
             f"⚠️ {_at(run.run_id, round_i + 1)}**流式一步都没输出** → 这一轮没跑成，"
             f"交回主 agent（同平台故障处置）",
         )
         return None
-    trace.dump_trace(_at(run.run_id, round_i + 1), resp["messages"],
-                     role=trace.EXECUTOR)
+    trace.dump_trace(_at(run.run_id, round_i + 1), resp["messages"], role=trace.EXECUTOR)
 
     outcome.artifacts = list(run.created)  # 记账，不扫文本
     outcome.report = _last_ai_text(resp)
@@ -335,9 +359,14 @@ def _decide_exit(run: _Run, resp: dict[str, object], round_i: int) -> str:
     if run.asked.get("question"):
         outcome.asked = run.asked["question"]
         # 「问」是一条链，这一跳是链头：执行器 → 平台。问题原话由上面那条 TOOL 行给全。
-        trace.handoff("要信息", "执行器", "平台", outcome.asked,
-                      structured="`ask_user(question=…)` 的参数原话"
-                                 "（**全文见上面那条 `🔧 TOOL`**，这里不重贴）")
+        trace.handoff(
+            "要信息",
+            "执行器",
+            "平台",
+            outcome.asked,
+            structured="`ask_user(question=…)` 的参数原话"
+            "（**全文见上面那条 `🔧 TOOL`**，这里不重贴）",
+        )
         trace.note(f"{_at(run.run_id, round_i + 1)}：**申报要信息** → 这一轮结束", kind="ask")
         return "stop"
 
@@ -358,8 +387,14 @@ def _decide_exit(run: _Run, resp: dict[str, object], round_i: int) -> str:
             f" → 推它继续（提示词见下）",
             kind="nudge",
         )
-        trace.handoff("推回去", "平台", "执行器", nudge,
-                      structured="结构事实：本轮无产物 ＋ 没调 `ask_user`", full=True)
+        trace.handoff(
+            "推回去",
+            "平台",
+            "执行器",
+            nudge,
+            structured="结构事实：本轮无产物 ＋ 没调 `ask_user`",
+            full=True,
+        )
         run.messages = list(resp["messages"]) + [HumanMessage(nudge)]
     else:
         # 推满了，不再推 → 下面按结构定成 incomplete
@@ -464,16 +499,16 @@ def _verdict_reason(outcome: ExecOutcome) -> tuple[str, str]:
     """
     if outcome.asked:
         why = "它**申报了要信息**（顺序：申报优先 → 交了产物 → 都没有）"
-        nxt = ("登记待答 → 平台强制**主 agent 试答**（答得上就带回去重跑，"
-               "答不上**原样**转给用户）")
+        nxt = "登记待答 → 平台强制**主 agent 试答**（答得上就带回去重跑，答不上**原样**转给用户）"
     elif outcome.artifacts:
         why = "它**交了产物**（同一顺序；本轮**没申报**）"
-        nxt = ("**回执给主 agent** —— 由它判「够不够」（平台不判质量；"
-               "判据以**技能声明的交付标准**为准）")
+        nxt = (
+            "**回执给主 agent** —— 由它判「够不够」（平台不判质量；"
+            "判据以**技能声明的交付标准**为准）"
+        )
     else:
         why = "**既没申报、也没交产物**（顺序里没有命中的那一条）"
-        nxt = ("**交回主 agent**（推满轮次仍没出口）—— 它看回执定："
-               "换个说法**重新委派** / 向用户说明")
+        nxt = "**交回主 agent**（推满轮次仍没出口）—— 它看回执定：换个说法**重新委派** / 向用户说明"
     if outcome.fault:
         # 故障时 status 仍是三态里的值，但这一轮根本没跑成 —— 与"执行器干不了"是两回事。
         # 三档的说法在 `FAULT_VERDICT` 表里，跟 `handoff.receipt` 那几张同形（守卫盯着键集合）。
@@ -495,14 +530,20 @@ def _verdict(outcome: ExecOutcome, run_id: str) -> dict[str, object]:
         # 标错了就是假话。
         "result_by": "platform",
         "q": "这个任务完成没？（三态**由结构定** —— 平台只看上面那三件事实，"
-             "**不读正文、不判质量**）",
+        "**不读正文、不判质量**）",
         "given": [
             "**申报要信息**（`ask_user`）："
-            + ("**有** —— 原话见上面那条 `ask_user` 的参数" if outcome.asked
-               else "**没有**（本轮没调它）"),
+            + (
+                "**有** —— 原话见上面那条 `ask_user` 的参数"
+                if outcome.asked
+                else "**没有**（本轮没调它）"
+            ),
             "**交付产物**（`write_artifact` 记的账）："
-            + (f"**{len(outcome.artifacts)} 个** —— {'、'.join(outcome.artifacts)}"
-               if outcome.artifacts else "**没有**（本轮没调它）"),
+            + (
+                f"**{len(outcome.artifacts)} 个** —— {'、'.join(outcome.artifacts)}"
+                if outcome.artifacts
+                else "**没有**（本轮没调它）"
+            ),
             f"**轮次**：内部第 {outcome.rounds} 轮（上限 {MAX_REACT_ROUNDS}）",
         ],
         "result": [f"status = **{outcome.status}**", f"依据：{why}"],

@@ -28,7 +28,10 @@ select = ["E", "F", "W", "I", "UP", "B", "T20"]
 ignore = ["E501"]  # 行长交给 formatter
 
 [tool.ruff.lint.per-file-ignores]
-# 命令行脚本的输出就是 print，库代码里禁它是为了防止调试残留
+# 命令行入口和脚本的输出就是界面；库代码里禁 print 是为了防调试残留
+"sxagent/__main__.py" = ["T20"]
+"app/*.py" = ["T20"]
+"build_cli.py" = ["T20"]
 "scripts/*.py" = ["T20"]
 
 [tool.pytest.ini_options]

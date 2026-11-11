@@ -18,8 +18,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from sxagent import session
 
@@ -67,8 +68,16 @@ def fmt_clock(t: datetime) -> str:
 
 #: 事件的八种形状。每种带什么字段，见各 emitter 与 `recorder.py`。
 _EVENT_TYPES = (
-    "section", "note", "block", "stream", "dump", "decision", "handoff", "cut",
+    "section",
+    "note",
+    "block",
+    "stream",
+    "dump",
+    "decision",
+    "handoff",
+    "cut",
 )
+
 
 class _Subscription:
     """`subscribe()` 的返回，拿它退订。
@@ -165,24 +174,37 @@ def check_role(role: object, where: str) -> str:
 
 #: kind 的受控词汇，展示层按它归角色。加一个 kind 要登记在这里，并去 `app/chat.py` 表态
 #: （上屏 / 有专门分支 / 只进日志）；漏表态，那一行就静默消失。
-KINDS = frozenset({
-    # agent.delegate
-    "dispatch", "supersede", "waiting", "delegate_failed",
-    # executor.run_task
-    "run_begin", "run_end", "executor_briefing", "nudge",
-    # graph.prepare / finalize
-    "feed", "relay",
-    # llm.safe_structured（`llm_io` = 那次调用的 PROMPT / RESPONSE / 失败提示）
-    "ask_main", "llm_io",
-# stream.stream_agent（`retry` = 抖动已重试一次；`writing` = 工具参数在流，报"已收到 N 字"）
-    "retry", "writing",
-    # artifacts.store_artifact（`artifact` = 产物落盘了：ID、标题、字数、路径）
-    "artifact",
-# graph.node_agent（`stream_empty` = 流式一步都没输出，退回 `invoke` 兜底：这一趟没有流式日志）
-    "stream_empty",
-# executor.run_task（`run_fault` = 重试仍失败；`ask` / `delivered` = 这一轮结束的结构事实）
-    "run_fault", "ask", "delivered",
-})
+KINDS = frozenset(
+    {
+        # agent.delegate
+        "dispatch",
+        "supersede",
+        "waiting",
+        "delegate_failed",
+        # executor.run_task
+        "run_begin",
+        "run_end",
+        "executor_briefing",
+        "nudge",
+        # graph.prepare / finalize
+        "feed",
+        "relay",
+        # llm.safe_structured（`llm_io` = 那次调用的 PROMPT / RESPONSE / 失败提示）
+        "ask_main",
+        "llm_io",
+        # stream.stream_agent（`retry` = 抖动已重试一次；`writing` = 工具参数在流，报"已收到 N 字"）
+        "retry",
+        "writing",
+        # artifacts.store_artifact（`artifact` = 产物落盘了：ID、标题、字数、路径）
+        "artifact",
+        # graph.node_agent（`stream_empty` = 流式一步都没输出，退回 `invoke` 兜底：这一趟没有流式日志）
+        "stream_empty",
+        # executor.run_task（`run_fault` = 重试仍失败；`ask` / `delivered` = 这一轮结束的结构事实）
+        "run_fault",
+        "ask",
+        "delivered",
+    }
+)
 
 
 def _check_kind(kind: str, where: str) -> str:
@@ -201,8 +223,9 @@ def section(title: str, kind: str = "") -> None:
 
     `kind` 是业务语义标签（受控词汇，见 `KINDS`），展示层按它归角色；不给就是纯记录、不上屏。
     """
-    _publish({"type": "section", "kind": _check_kind(kind, "section"),
-              "title": title, "ts": stamp()})
+    _publish(
+        {"type": "section", "kind": _check_kind(kind, "section"), "title": title, "ts": stamp()}
+    )
 
 
 def note(text: str, kind: str = "") -> None:
@@ -215,8 +238,16 @@ def note(text: str, kind: str = "") -> None:
 
 def block(label: str, text: str, *, kind: str = "", indent: str = "  ") -> None:
     """一个带标签的多行文本块（prompt / response / 交接正文）。"""
-    _publish({"type": "block", "kind": _check_kind(kind, "block"), "label": label,
-              "text": text, "indent": indent, "ts": stamp()})
+    _publish(
+        {
+            "type": "block",
+            "kind": _check_kind(kind, "block"),
+            "label": label,
+            "text": text,
+            "indent": indent,
+            "ts": stamp(),
+        }
+    )
 
 
 def handoff(
@@ -233,8 +264,19 @@ def handoff(
     摘要让复盘的人一眼看到：谁给谁、交了多少字、有没有结构化对象、跳名与方向。截断由切的
     那一方自己报，不在这里事后解析文本。`full=True` 只在别处没 dump 过这一跳时用。
     """
-    _publish({"type": "handoff", "kind": "", "hop": hop, "frm": frm, "to": to,
-              "text": text, "structured": structured, "full": full, "ts": stamp()})
+    _publish(
+        {
+            "type": "handoff",
+            "kind": "",
+            "hop": hop,
+            "frm": frm,
+            "to": to,
+            "text": text,
+            "structured": structured,
+            "full": full,
+            "ts": stamp(),
+        }
+    )
 
 
 def emit(ev: dict[str, object]) -> None:
@@ -252,8 +294,17 @@ def cut(where: str, kept: int, total: int, *, see: str = "") -> None:
     标记在文本里（读的人看得见），这一行在日志里。`where` 是切的哪一份，`kept` / `total`
     是实测算数，`see` 补一句全文在哪。
     """
-    _publish({"type": "cut", "kind": "", "where": where, "kept": kept,
-              "total": total, "see": see, "ts": stamp()})
+    _publish(
+        {
+            "type": "cut",
+            "kind": "",
+            "where": where,
+            "kept": kept,
+            "total": total,
+            "see": see,
+            "ts": stamp(),
+        }
+    )
 
 
 def dump_trace(tag: str, messages: list[BaseMessage], *, role: str) -> None:
@@ -262,8 +313,16 @@ def dump_trace(tag: str, messages: list[BaseMessage], *, role: str) -> None:
     展示层靠 `tool_call_id` 配对、靠 `additional_kwargs` 认注入，不反推结构。`role` 必填。
     """
     check_role(role, "dump_trace")
-    _publish({"type": "dump", "kind": "", "role": role, "tag": tag,
-              "messages": list(messages), "ts": stamp()})
+    _publish(
+        {
+            "type": "dump",
+            "kind": "",
+            "role": role,
+            "tag": tag,
+            "messages": list(messages),
+            "ts": stamp(),
+        }
+    )
 
 
 # ──────── 消息渲染（记录器 / 终端 / 台账 / 跑批记录共用） ────────
@@ -282,7 +341,9 @@ def brief_args(args: object, limit: int = 120) -> str:
     parts = []
     for k, v in args.items():
         text = str(v)
-        parts.append(f"{k}=<{len(text)}字>" if k in BODY_ARGS and len(text) > limit else f"{k}={text!r}")
+        parts.append(
+            f"{k}=<{len(text)}字>" if k in BODY_ARGS and len(text) > limit else f"{k}={text!r}"
+        )
     return ", ".join(parts)
 
 

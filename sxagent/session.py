@@ -15,11 +15,11 @@ API。状态挂模块级的话，用户 B 会看到用户 A 的全部产物。
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Iterator, TextIO
+from typing import TextIO
 
 #: 事件订阅者的类型：收一个事件、不返回。
 Sink = Callable[[dict[str, object]], None]

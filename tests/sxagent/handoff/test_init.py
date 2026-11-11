@@ -18,9 +18,7 @@ def test_exec_outcome_satisfies_the_contract() -> None:
 
 
 def test_every_hop_section_is_declared() -> None:
-    undeclared = {
-        hop: [key for key in keys if key not in SECTION] for hop, keys in HOPS.items()
-    }
+    undeclared = {hop: [key for key in keys if key not in SECTION] for hop, keys in HOPS.items()}
     assert {hop: keys for hop, keys in undeclared.items() if keys} == {}
 
 

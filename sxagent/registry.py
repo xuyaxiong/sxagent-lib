@@ -11,7 +11,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Mapping
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 仅用于类型标注 —— 运行时不 import，否则 registry ↔ skills 成环
     from sxagent.skills import Skill
@@ -71,8 +72,6 @@ class _Registry:
                 "技能注册表未初始化 —— 没有任何模块 import 过 `sxagent.skills`。"
                 "默认表由它登记；用技能之前请先 `import sxagent.skills`。"
             )
-
-
 
 
 class _Testing:

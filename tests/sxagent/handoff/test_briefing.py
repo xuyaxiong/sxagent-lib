@@ -92,8 +92,7 @@ def test_excluded_list_is_within_task_and_gives_reasons() -> None:
 def test_included_fields_reach_the_briefing() -> None:
     text = _render()
     missing = {
-        key: [v for v in _sentinels(key) if v not in text]
-        for key in set(SENTINEL) - set(EXCLUDED)
+        key: [v for v in _sentinels(key) if v not in text] for key in set(SENTINEL) - set(EXCLUDED)
     }
     assert {key: v for key, v in missing.items() if v} == {}
 

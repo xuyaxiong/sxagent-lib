@@ -37,8 +37,25 @@ ENTRY_NAME = "SKILL.md"
 
 #: 收哪些扩展名当参考文件（小写、含点）。要加就加这里。
 TEXT_EXTS: frozenset[str] = frozenset(
-    {".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".tsv",
-     ".html", ".xml", ".toml", ".ini", ".sql", ".log", ".py", ".js", ".ts"}
+    {
+        ".md",
+        ".markdown",
+        ".txt",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".csv",
+        ".tsv",
+        ".html",
+        ".xml",
+        ".toml",
+        ".ini",
+        ".sql",
+        ".log",
+        ".py",
+        ".js",
+        ".ts",
+    }
 )
 
 #: 单个参考文件的大小上限（字节）。超了不列 —— 参考文件是给模型读的，几 MB 的多半放错了地方。

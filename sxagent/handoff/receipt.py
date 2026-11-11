@@ -181,8 +181,11 @@ def _deliver_line(outcome: Outcome, kind: str) -> str:
         # 三档故障三条交付行，各有各的处置：`rejected` 那档尤其不许说"重试过一次仍失败"
         # （根本没重试）。跑了多久说不清就不说（没有 `wall_s`），留空比编一个数强；
         # `max(1, …)` 是为了别说出"跑到 0 分钟"（<60s 时会四舍五入到 0）。
-        mins = (f"（跑到 {max(1, round(outcome.wall_s / 60))} 分钟还没交）"
-                if getattr(outcome, "wall_s", 0) else "")
+        mins = (
+            f"（跑到 {max(1, round(outcome.wall_s / 60))} 分钟还没交）"
+            if getattr(outcome, "wall_s", 0)
+            else ""
+        )
         template = _DELIVER_BY_FAULT.get(outcome.fault_kind, DELIVERY_FAULT_UNCLASSIFIED)
         # 三张模板都不带别的占位符（只有 timeout 那个 `{}`），所以统一 format 是安全的。
         return template.format(mins)

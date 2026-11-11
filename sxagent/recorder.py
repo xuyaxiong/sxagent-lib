@@ -20,8 +20,7 @@ import time
 from pathlib import Path
 from typing import TextIO
 
-from sxagent import session
-from sxagent import trace
+from sxagent import session, trace
 from sxagent.config import app_root
 from sxagent.handoff.decision import render_decision  # 决策块的唯一那条渲染路
 
@@ -119,8 +118,8 @@ def record(ev: dict[str, object]) -> None:
     日志是权威记录：老日志、`_run.md` 附录、人的翻阅习惯都不能断，所以格式固定。
     由总线调（`trace._publish`），不是订阅者。
     """
-    ts = ev["ts"]                      # 结构（`datetime`）：嵌套事件要原样往下传
-    head = f"[{trace.fmt_ts(ts)}]"     # 日志行的前缀 —— 渲染成什么样是这一层的事
+    ts = ev["ts"]  # 结构（`datetime`）：嵌套事件要原样往下传
+    head = f"[{trace.fmt_ts(ts)}]"  # 日志行的前缀 —— 渲染成什么样是这一层的事
     t = ev["type"]
     if t == "section":
         write()
@@ -134,14 +133,25 @@ def record(ev: dict[str, object]) -> None:
     elif t == "stream":
         write(f"{head} {_STREAM_MARK}{ev['who']}⟩ {ev['text']}")
     elif t == "handoff":
-        write(f"{head} 📤 交接 · {ev['hop']}（{ev['frm']} → {ev['to']}）：{len(ev['text'])} 字"
-              f"｜结构化：{ev['structured'] or '（纯文本）'}")
+        write(
+            f"{head} 📤 交接 · {ev['hop']}（{ev['frm']} → {ev['to']}）：{len(ev['text'])} 字"
+            f"｜结构化：{ev['structured'] or '（纯文本）'}"
+        )
         if ev["full"]:
-            record({"type": "block", "label": f"交接全文 · {ev['hop']}",
-                    "text": ev["text"], "indent": "  ", "ts": ts})
+            record(
+                {
+                    "type": "block",
+                    "label": f"交接全文 · {ev['hop']}",
+                    "text": ev["text"],
+                    "indent": "  ",
+                    "ts": ts,
+                }
+            )
     elif t == "cut":
-        write(f"{head} ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
-              + (f"｜{ev['see']}" if ev.get("see") else ""))
+        write(
+            f"{head} ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
+            + (f"｜{ev['see']}" if ev.get("see") else "")
+        )
     elif t == "dump":
         messages = ev["messages"]
         write(f"{head} {ev['tag']} 消息轨迹（{len(messages)} 条）:")

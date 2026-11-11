@@ -37,7 +37,7 @@ SECTION: dict[str, str] = {
     "resume": "【续跑提示】",
     # ── 回执（执行器 → 主 agent，`receipt.py`）──
     "deliver": "【交付】",
-#: 它申报要的那句原话。塞进【交付】就混进平台的框架话里了。
+    #: 它申报要的那句原话。塞进【交付】就混进平台的框架话里了。
     "asked": "【它要的信息】",
     "produced": "【产出的产物】",
     "report": "【执行器说】",
@@ -69,7 +69,7 @@ SECTION: dict[str, str] = {
     "dec_q": "【问题】",
     "dec_result": "【结果】",
     # ── 判定（平台按结构定 → 记录，`decision.py`）──
-#: 【结果】有两种作者：模型输出的（标来源），和平台按结构定的结论（不标）。
+    #: 【结果】有两种作者：模型输出的（标来源），和平台按结构定的结论（不标）。
     "verdict_result": "【平台判定】",
 }
 
@@ -88,7 +88,7 @@ SOURCE_NOTE: dict[str, str] = {
     #: 只有【结果】要标（LLM 输出的）；另外三格是平台的框架话，按同一条规矩不标。
     "dec_result": "**它说的** —— LLM 的输出，原样",
     # ── 试答（`ask.py`）──
-#: `ask_context` 故意不在这里：【你的上下文】是平台列的，没有来源就不写来源行。
+    #: `ask_context` 故意不在这里：【你的上下文】是平台列的，没有来源就不写来源行。
     "agent_answer": "**你说的** —— 已成对记进 Task，下次重入还会带上",
 }
 
@@ -200,19 +200,30 @@ DELIVERY_FAULT_UNCLASSIFIED = "⚠️ 没跑成 —— **平台侧没跑成**（
 #: 每一跳渲染哪几段。校验用 ⊆（渲染出来的都在声明里），因为回执的段有条件。
 HOPS: dict[str, tuple[str, ...]] = {
     "briefing": (
-        "task", "user_turns", "answered",
-        "already_produced", "readable", "resume",
+        "task",
+        "user_turns",
+        "answered",
+        "already_produced",
+        "readable",
+        "resume",
     ),
     "receipt": (
         # `asked` 紧跟【交付】：要信息的时候，那句问题就是这条回执的主角。
-        "deliver", "asked", "produced", "report", "agent_answer", "next",
+        "deliver",
+        "asked",
+        "produced",
+        "report",
+        "agent_answer",
+        "next",
         "fault",
     ),
     "receipt_rejected": (
-        "not_dispatched", "available_skills", "available_artifacts",
+        "not_dispatched",
+        "available_skills",
+        "available_artifacts",
     ),
     "ledger": ("ledger",),
-#: 试答。顺序就是读的人理解的顺序：要什么 → 派了什么 → 它说了什么 → 你的上下文 → 请判断。
+    #: 试答。顺序就是读的人理解的顺序：要什么 → 派了什么 → 它说了什么 → 你的上下文 → 请判断。
     "ask": ("asked", "task", "report", "ask_context", "ask_decide"),
     "nudge": ("nudge",),
     "relay": ("relay",),
@@ -220,7 +231,7 @@ HOPS: dict[str, tuple[str, ...]] = {
     "task_text": ("skill_instructions", "known"),
     #: 决策：一次 LLM 调用的两端 ＋ 平台的两句描述。
     "decision": ("dec_given", "dec_q", "dec_result", "next"),
-#: 判定。和 `decision` 共用三个段名，只有结论那格分开写。
+    #: 判定。和 `decision` 共用三个段名，只有结论那格分开写。
     "verdict": ("dec_given", "dec_q", "verdict_result", "next"),
 }
 

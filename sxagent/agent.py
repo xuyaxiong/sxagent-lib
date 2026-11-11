@@ -29,12 +29,20 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
     from langgraph.graph.state import CompiledStateGraph
 
-from sxagent import trace
+from sxagent import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
+from sxagent import (
+    executor,  # 走模块属性，见 delegate 的注释
+    trace,
+)
+from sxagent.artifacts import (
+    artifact_index_lines,
+    list_artifacts,
+    read_artifact,
+    write_artifact,
+)
 from sxagent.config import get_model
-from sxagent import executor  # 走模块属性，见 delegate 的注释
-from sxagent.handoff.ask import build_prompt as ask_prompt  # 试答
-from sxagent.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
 from sxagent.handoff import Outcome  # 执行器结果的契约（实现在 executor，由测试盯着）
+from sxagent.handoff.ask import build_prompt as ask_prompt  # 试答
 from sxagent.handoff.briefing import (  # 委托单
     Task,
     Turn,
@@ -43,6 +51,7 @@ from sxagent.handoff.briefing import (  # 委托单
     render_briefing,
     settle,
 )
+from sxagent.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
 from sxagent.handoff.receipt import (  # 回执
     NOTE_BY_FAULT,
     NOTE_FAULT_UNCLASSIFIED,
@@ -52,15 +61,8 @@ from sxagent.handoff.receipt import (  # 回执
     render_receipt,
 )
 from sxagent.llm import safe_structured
-from sxagent import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
-from sxagent.artifacts import (
-    artifact_index_lines,
-    list_artifacts,
-    read_artifact,
-    write_artifact,
-)
-from sxagent.skill_pack import read_skill, read_skill_file  # 技能包：两个读工具（磁盘）
 from sxagent.registry import registry  # 技能注册表（唯一持有者）
+from sxagent.skill_pack import read_skill, read_skill_file  # 技能包：两个读工具（磁盘）
 from sxagent.skills import Skill  # 技能领域
 
 #: 主 agent 的 system prompt。它是平台约定，不约束 skill 作者。
@@ -104,7 +106,7 @@ _MAIN_PROMPT = (
     "## 🔴 前序产物怎么交给下一个任务\n"
     "\n"
     "**传 ID，不要转述正文，也不用先读它。** 需要前面交付的产物当输入时：\n"
-    "`delegate(skill_name=\"...\", task=\"...\", artifacts=[\"art_001\"])`\n"
+    '`delegate(skill_name="...", task="...", artifacts=["art_001"])`\n'
     "执行器会拿到它的名称与梗概，需要全文**它自己读**。\n"
     "\n"
     "- **别读**：转交之前先 `read_artifact` 读一遍，等于把那几千字**永久背进你的上下文**\n"
@@ -171,11 +173,14 @@ async def _ask_main(
     prompt = ask_prompt(skill_name, task, outcome, msgs)
     # 这一步把主 agent 的上下文又发了一遍：这行是清单（多少字 ＋ 什么构成），正文默认
     # 不逐字记（`SXAGENT_LOG_PROMPT`），所以别在这里写"逐字见下"。
-    trace.handoff("试答", "平台", "主 agent", prompt,
-                  structured=f"ExecOutcome ＋ 全部 {len(msgs)} 条消息")
+    trace.handoff(
+        "试答", "平台", "主 agent", prompt, structured=f"ExecOutcome ＋ 全部 {len(msgs)} 条消息"
+    )
     # 调用失败时保守当作「答不上」—— 交给用户，而不是编一个答案
     r = await safe_structured(
-        _AgentAnswer, prompt, _AgentAnswer(can_answer=False),
+        _AgentAnswer,
+        prompt,
+        _AgentAnswer(can_answer=False),
         tag=_ASK_STEP,
         kind="ask_main",
         # 返回不原样再记：下面那条决策记录里已有排好版的「结果」，再来一条 repr 就是两副
@@ -206,8 +211,7 @@ async def _ask_main(
             "**主 agent 答得上** → 成对记进 `Task.qa`（`by=主 agent`）→ 带回去重跑执行器，"
             "**不打扰用户**"
             if r.can_answer
-            else "**主 agent 答不上 → 转给用户**：登记待答，由**平台**把执行器原话"
-                 "**透传**给用户"
+            else "**主 agent 答不上 → 转给用户**：登记待答，由**平台**把执行器原话**透传**给用户"
         ),
     )
     return ans if r.can_answer else ""
@@ -226,15 +230,15 @@ async def try_answer_then_rerun(
         return outcome, ""
     # 成对记：只记答案的话，下次重入时 `report` 已被新问题覆盖，这条答案就没了指涉。
     # 「问」取 `outcome.asked`（`ask_user` 的原话）而不是 `report`（混着过场的那段话）。
-    rec["qa"] = [*(rec.get("qa") or []),
-                 {"by": "主 agent", "q": outcome.asked, "a": answer}]
+    rec["qa"] = [*(rec.get("qa") or []), {"by": "主 agent", "q": outcome.asked, "a": answer}]
     # 试答后重跑也是重入：走同一份交接书（带上刚才那一轮的进度、它问过什么）
     o2 = await executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
     return o2, answer
 
 
-async def dispatch(skill: Skill, rec: Task, tasks: list[Task], *, trigger: str,
-                   messages: list[BaseMessage]) -> tuple[Outcome, str, list[Task]]:
+async def dispatch(
+    skill: Skill, rec: Task, tasks: list[Task], *, trigger: str, messages: list[BaseMessage]
+) -> tuple[Outcome, str, list[Task]]:
     """派发编排，`delegate` 与 `graph._feed_waiting` 共用的那一段。
 
     顺序不能调：跑执行器 → 落账 → 记 `run_by`（台账据此说清"全文在哪"）→ 要信息就
@@ -255,7 +259,11 @@ async def dispatch(skill: Skill, rec: Task, tasks: list[Task], *, trigger: str,
 
 
 def _cmd(
-    runtime: ToolRuntime, recs: list[Task] | None, msg: str, *, handoff: dict[str, object] | None = None
+    runtime: ToolRuntime,
+    recs: list[Task] | None,
+    msg: str,
+    *,
+    handoff: dict[str, object] | None = None,
 ) -> Command:
     """返回这几条 Task，合并交给 state 的 reducer。
 
@@ -328,15 +336,18 @@ def _user_turns(messages: list[BaseMessage]) -> list[dict[str, object]]:
 # ──────────────────────────── 委派 ────────────────────────────
 
 
-def _new_task(skill_name: str, task: str, tid: str, refs: list[str],
-              turns: list[Turn]) -> Task:
+def _new_task(skill_name: str, task: str, tid: str, refs: list[str], turns: list[Turn]) -> Task:
     """建委托单 —— 这次委派的全部已知（schema 见 `handoff.briefing.Task`）。
 
     `total=False` 是如实：注入的 Task 可能只有部分字段。
     """
     return {
-        "id": tid, "skill": skill_name, "task": task,
-        "stage": "running", "artifacts": [], "report": "",
+        "id": tid,
+        "skill": skill_name,
+        "task": task,
+        "stage": "running",
+        "artifacts": [],
+        "report": "",
         # 它申报要的那条信息（`ask_user` 的原话），每次 `settle` 覆盖写
         "asked": "",
         # 平台故障的原因（空 = 没故障）与它的类（`FaultKind`），同样覆盖写
@@ -356,8 +367,16 @@ def _new_task(skill_name: str, task: str, tid: str, refs: list[str],
     }
 
 
-def _out(runtime: ToolRuntime, rec: Task, superseded: list[Task], outcome: Outcome, *,
-         agent_answer: str = "", note: str = "", mooted: list[Task] | None = None) -> Command:
+def _out(
+    runtime: ToolRuntime,
+    rec: Task,
+    superseded: list[Task],
+    outcome: Outcome,
+    *,
+    agent_answer: str = "",
+    note: str = "",
+    mooted: list[Task] | None = None,
+) -> Command:
     """统一的返回口，总是带上被取代的旧 Task。
 
     一次做完两件事：构造回执对象、渲染成文本。文本进 `content`（模型只看这个），对象挂
@@ -367,19 +386,39 @@ def _out(runtime: ToolRuntime, rec: Task, superseded: list[Task], outcome: Outco
     text = render_receipt(r)
     # 交接关键日志（复盘用）：这一跳交了多少、有没有结构化对象。
     # 正文不在这里 dump：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
-    trace.handoff("回执", "执行器", "主 agent", text,
-                  structured=f"Receipt(kind={r['kind']}，{len(r['sections'])} 段)")
+    trace.handoff(
+        "回执",
+        "执行器",
+        "主 agent",
+        text,
+        structured=f"Receipt(kind={r['kind']}，{len(r['sections'])} 段)",
+    )
     return _cmd(runtime, [rec, *superseded, *(mooted or [])], text, handoff=r)
 
 
-def _reply(runtime: ToolRuntime, rec: Task, superseded: list[Task], tid: str,
-           skill: Skill, outcome: Outcome, *, answer: str = "",
-           mooted: list[Task] | None = None) -> Command:
+def _reply(
+    runtime: ToolRuntime,
+    rec: Task,
+    superseded: list[Task],
+    tid: str,
+    skill: Skill,
+    outcome: Outcome,
+    *,
+    answer: str = "",
+    mooted: list[Task] | None = None,
+) -> Command:
     """把这一趟的结果说回主 agent：按三态枚举分派，穷举，没有第四种。"""
     # ① 完成了 —— 平台不下"完成了"的结论：三态是结构算的，"够不够"由主 agent 看回执判。
     if outcome.status == "completed":
-        return _out(runtime, rec, superseded, outcome, agent_answer=answer,
-                    note=next_note("completed", skill=skill.name), mooted=mooted)
+        return _out(
+            runtime,
+            rec,
+            superseded,
+            outcome,
+            agent_answer=answer,
+            note=next_note("completed", skill=skill.name),
+            mooted=mooted,
+        )
 
     # ② 在要信息 —— 试答已在 `dispatch` 里走过；走到这里 = 答不上（或答了仍缺）→
     #    登记待答，执行器问的那句由平台原样转给用户。
@@ -396,13 +435,21 @@ def _reply(runtime: ToolRuntime, rec: Task, superseded: list[Task], tid: str,
     #    主 agent 该做的事也不同（原样重派 vs 换说法重派）。
     if outcome.fault:
         # 三档故障三种说法：措辞按 `fault_kind` 从对象取；表住 `handoff.receipt`，不在这儿。
-        trace.note(f"delegate · {tid} "
-                   + NOTE_BY_FAULT.get(outcome.fault_kind, NOTE_FAULT_UNCLASSIFIED),
-                   kind="delegate_failed")
-        return _out(runtime, rec, superseded, outcome,
-                    note=next_note("fault", fault_kind=outcome.fault_kind))
-    trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
-               kind="delegate_failed")
+        trace.note(
+            f"delegate · {tid} " + NOTE_BY_FAULT.get(outcome.fault_kind, NOTE_FAULT_UNCLASSIFIED),
+            kind="delegate_failed",
+        )
+        return _out(
+            runtime,
+            rec,
+            superseded,
+            outcome,
+            note=next_note("fault", fault_kind=outcome.fault_kind),
+        )
+    trace.note(
+        f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
+        kind="delegate_failed",
+    )
     return _out(runtime, rec, superseded, outcome, note=next_note("failed"))
 
 
@@ -436,15 +483,15 @@ async def delegate(
     #    读不到会自己找补，错误被埋进产物里。
     skill = registry.get(skill_name)
     if skill is None:
-        return _reject(runtime, "rejected_skill", f"❌ 没有技能「{skill_name}」",
-                       "、".join(registry.names()))
+        return _reject(
+            runtime, "rejected_skill", f"❌ 没有技能「{skill_name}」", "、".join(registry.names())
+        )
     refs = [a for a in (artifacts or []) if a]
     unknown = [a for a in refs if not artifacts_mod.has(a)]
     if unknown:
         # 用换行拼，不用"；"：清单每项可能两行（梗概 ＋ 路径），分号拼会挤成一大段。
         have = "\n".join(artifact_index_lines()) or "（本会话还没有产物）"
-        return _reject(runtime, "rejected_artifact",
-                       f"❌ 产物 {'、'.join(unknown)} 不存在", have)
+        return _reject(runtime, "rejected_artifact", f"❌ 产物 {'、'.join(unknown)} 不存在", have)
 
     # ② 立案 —— 这次委派记成一条 Task。用户原话平台硬搬（快照进 Task），全文按需取。
     turns = _user_turns(runtime.state.get("messages") or [])
@@ -456,19 +503,23 @@ async def delegate(
     # kind：语义标签，展示层（订阅事件的那层）按它归角色 —— 不靠子串认行
     trace.section(f"delegate · {skill_name} · {tid}", kind="dispatch")
     if superseded:
-        trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
-                   kind="supersede")
+        trace.note(
+            f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
+            kind="supersede",
+        )
 
     # ③ 执行 —— 编排（run_task → 落账 → 试答 → 落账 → 取代）走两条路共用的那个函数；
     #    `run_task` 内部已含出口限制：既没完成也没提问会被推回去继续。
     outcome, answer, mooted = await dispatch(
-        skill, rec, runtime.state.get("tasks") or [],
-        trigger="delegate", messages=runtime.state.get("messages") or [],
+        skill,
+        rec,
+        runtime.state.get("tasks") or [],
+        trigger="delegate",
+        messages=runtime.state.get("messages") or [],
     )
 
     # ④ 回话 —— 按三态说回主 agent（穷举，没有第四种）。
-    return _reply(runtime, rec, superseded, tid, skill, outcome,
-                  answer=answer, mooted=mooted)
+    return _reply(runtime, rec, superseded, tid, skill, outcome, answer=answer, mooted=mooted)
 
 
 # ──────────────────────────── 装配 ────────────────────────────
@@ -492,6 +543,7 @@ def tool_names() -> set[str]:
     来源会静默回落成"平台"。测试拿这个函数断覆盖性。
     """
     return {tool.name for tools in _TOOLS.values() for tool in tools}
+
 
 #: 非默认模式下往系统提示里补一句 —— 工具集变了，得让它知道为什么。
 _MODE_NOTE: dict[str, str] = {
@@ -547,8 +599,10 @@ class _StopWhenPending(AgentMiddleware):
         """单独报一行：读日志的人得看得出"主 agent 这一轮被平台收了话" ——
         不然只会以为它没说话。`why` 写清是哪条路拦下的，复盘要看。
         """
-        trace.note(f"主 agent **这一轮不发言**（{why}，问题由平台原样贴给用户）"
-                   " → `before_model` 跳 end", kind="")
+        trace.note(
+            f"主 agent **这一轮不发言**（{why}，问题由平台原样贴给用户） → `before_model` 跳 end",
+            kind="",
+        )
         return {"jump_to": "end"}
 
 

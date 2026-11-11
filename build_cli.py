@@ -57,9 +57,9 @@ EXCLUDE: list[str] = [
 #: 打完（哪怕打失败了）原样放回。`logs/` 不在列 —— 那是原始 trace，
 #: `runs/<tag>/` 里的 `_run.md` 已经附了一份。
 KEEP: list[str] = [
-    ".env",    # 填好的 key / model / base_url —— 丢了包就跑不起来
+    ".env",  # 填好的 key / model / base_url —— 丢了包就跑不起来
     "skills",  # 用户自己往里丢的技能包
-    "runs",    # 每次对话的记录（收回来分析用的）
+    "runs",  # 每次对话的记录（收回来分析用的）
 ]
 
 
@@ -124,16 +124,22 @@ def build(out_dir: Path | None = None) -> None:
     # 撞上，而那种时候更要紧的是别覆盖它 —— 宁可多留一个目录，也不能把用户的东西盖掉。
     stash = dist / f"_keep-{time.strftime('%m%d-%H%M%S')}"
     args: list[str] = [
-        sys.executable, "-m", "PyInstaller",
+        sys.executable,
+        "-m",
+        "PyInstaller",
         str(ENTRY),
-        "--name", NAME,
-        "--onedir",              # ← 见模块 docstring：不要改成 onefile
-        "--console",             # 双击弹一个控制台窗口跑 chat —— 不用用户敲命令行
+        "--name",
+        NAME,
+        "--onedir",  # ← 见模块 docstring：不要改成 onefile
+        "--console",  # 双击弹一个控制台窗口跑 chat —— 不用用户敲命令行
         "--noconfirm",
         "--clean",
-        "--distpath", str(dist),
-        "--workpath", str(ROOT / "build" / dist.name),  # 临时目录也跟着分开，免得互相踩
-        "--paths", str(ROOT),    # 让 `app` / `sxagent` 两个包可被解析
+        "--distpath",
+        str(dist),
+        "--workpath",
+        str(ROOT / "build" / dist.name),  # 临时目录也跟着分开，免得互相踩
+        "--paths",
+        str(ROOT),  # 让 `app` / `sxagent` 两个包可被解析
     ]
     for src, dst in ADD_DATA:
         args += ["--add-data", f"{src}{';' if sys.platform == 'win32' else ':'}{dst}"]
@@ -186,8 +192,10 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="打包成能发给别人的程序")
     ap.add_argument(
-        "--out", type=Path, default=None,
+        "--out",
+        type=Path,
+        default=None,
         help="产物落到哪个 dist 目录（默认 dist/）。⚠️ **上一个包还在跑时必须指定**，"
-             "否则 PyInstaller 删不掉目标目录会报 PermissionError",
+        "否则 PyInstaller 删不掉目标目录会报 PermissionError",
     )
     build(ap.parse_args().out)

@@ -66,8 +66,11 @@ def _offenders() -> list[tuple[str, str, str]]:
 
 
 def test_no_bare_any_or_container_in_annotations() -> None:
-    unaccounted = [f"{path} {func} 的 {name}" for path, func, name in _offenders()
-                   if (path, func, name) not in EXEMPT]
+    unaccounted = [
+        f"{path} {func} 的 {name}"
+        for path, func, name in _offenders()
+        if (path, func, name) not in EXEMPT
+    ]
     assert unaccounted == []
 
 

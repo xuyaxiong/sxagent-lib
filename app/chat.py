@@ -10,12 +10,10 @@
 `name` / `description`），但主 agent 只看得见这两个字段，全文按需 `read_skill` 取。跑完落一份
 与跑批同格式的记录，在 `runs/<tag>/` 下。"""
 
-# ruff: noqa: T201  # 交互式入口，输出即界面
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 import re
@@ -34,8 +32,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from app.runtime import (  # noqa: E402
     DEFAULT_SKILLS_DIR,
-    append_trace,
     RUNS_DIR,
+    append_trace,
     ctx_warn,
     dump_artifacts,
     dump_run_record,
@@ -43,12 +41,11 @@ from app.runtime import (  # noqa: E402
     install,
     snapshot,
 )
-from sxagent import aio
+from sxagent import aio, recorder, session, trace  # noqa: E402
+from sxagent import artifacts as artifacts_mod  # noqa: E402 —— artifacts 全仓统一叫 artifacts_mod
 from sxagent.config import describe  # noqa: E402
-from sxagent import recorder, session, trace  # noqa: E402
 from sxagent.graph import build, next_pending  # noqa: E402
 from sxagent.handoff.briefing import asked_text  # noqa: E402
-from sxagent import artifacts as artifacts_mod  # noqa: E402 —— artifacts 全仓统一叫 artifacts_mod
 from sxagent.registry import registry  # noqa: E402
 
 # 路径一律从 `app.runtime` 取（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`），本文件不自己算：
@@ -116,21 +113,21 @@ def _skill_label(skill) -> tuple[str, str]:
 #: 角色 →（标签 + ANSI 颜色）。颜色在非 tty / `NO_COLOR` 下自动关掉。
 #: 标签是"图标 ＋ 英文名词"，宽度按显示列算（见 `_dw`），gutter 才对得齐。
 _STYLE: dict[str, tuple[str, str]] = {
-    "user":   ("👤 USER",     "\033[96m"),
-    "agent":  ("🧠 AGENT",    "\033[92m"),
-    "say":    ("🤖 EXECUTOR", "\033[96m"),
-    "tool":   ("🔧 TOOL",     "\033[93m"),
-    "ret":    ("🔙 RETURN",   "\033[90m"),
-    "inject": ("📥 INJECT",   "\033[35m"),
-    "decide": ("🧭 DECIDE",   "\033[95m"),
-    "exec":   ("🚀 RUN",      "\033[94m"),
-    "ask":    ("💬 ASK",      "\033[91m"),
+    "user": ("👤 USER", "\033[96m"),
+    "agent": ("🧠 AGENT", "\033[92m"),
+    "say": ("🤖 EXECUTOR", "\033[96m"),
+    "tool": ("🔧 TOOL", "\033[93m"),
+    "ret": ("🔙 RETURN", "\033[90m"),
+    "inject": ("📥 INJECT", "\033[35m"),
+    "decide": ("🧭 DECIDE", "\033[95m"),
+    "exec": ("🚀 RUN", "\033[94m"),
+    "ask": ("💬 ASK", "\033[91m"),
     #: 答复通道的提示符，和 `USER` 共用同一条 stdin，标签必须能分辨谁在说话。
-    "reply":  ("↩️ ANSWER",   "\033[91m"),
-    "plat":   ("📮 PLATFORM", "\033[90m"),
-    "done":   ("🏁 DONE",     "\033[92m"),
-    "task":   ("📋 TASKS",    "\033[90m"),
-    "ctx":    ("📊 CONTEXT",  "\033[90m"),
+    "reply": ("↩️ ANSWER", "\033[91m"),
+    "plat": ("📮 PLATFORM", "\033[90m"),
+    "done": ("🏁 DONE", "\033[92m"),
+    "task": ("📋 TASKS", "\033[90m"),
+    "ctx": ("📊 CONTEXT", "\033[90m"),
 }
 
 _COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -167,7 +164,7 @@ def _dw(s: str) -> int:
 
 
 #: 正文层（亮色）只有"人和主 agent 的对话"，其余都是机制层（暗灰），靠颜色分、左边对齐。
-_LABEL_W = 12   # gutter 里标签的宽度（最长的 EXECUTOR/PLATFORM 是 11 列）
+_LABEL_W = 12  # gutter 里标签的宽度（最长的 EXECUTOR/PLATFORM 是 11 列）
 #: gutter 里时间那段的列数 —— 按 `trace.fmt_clock` 的真实宽度算，改格式不用回来改这里。
 _TS = f"[{trace.fmt_clock(trace.stamp())}] "
 
@@ -176,17 +173,17 @@ _TS = f"[{trace.fmt_clock(trace.stamp())}] "
 #: 平台注入、agent 的话、别的工具返回都是观察窗口。记录层不跟着改，要少看噪音在播报层砍。
 _READ_TOOLS: dict[str, str] = {
     "read_skill": "技能包",
-    "read_skill_file": "技能包",   # 渐进式披露第三层：技能自带的 references/ assets/
+    "read_skill_file": "技能包",  # 渐进式披露第三层：技能自带的 references/ assets/
     "read_artifact": "产物落盘文件",
 }
 #: `read_user_turn` 不在此列：它返回的是用户原话（事实来源），是【用户原话】的披露出口。
 
 _MAIN_ROLES = frozenset({"user", "agent"})
-_MECH_COLOR = "\033[90m"     # 暗灰：机制日志统一压暗，靠标签区分类型
+_MECH_COLOR = "\033[90m"  # 暗灰：机制日志统一压暗，靠标签区分类型
 
 
 #: CLI 输出落盘的 sink（`main()` 里打开）：终端里滚过去的，去色后逐行落进 `_console.log`。
-_SINK: "object | None" = None
+_SINK: object | None = None
 
 
 def _to_file(line: str) -> None:
@@ -280,9 +277,7 @@ def _emit(role: str, text: str, stamp: datetime | None = None, *, cap: bool = Fa
     # 可用宽度 = 终端列数 − gutter。管道运行没 tty 时用 100 而不是默认的 80：
     # 这个宽度也决定 `_console.log` 怎么折，80 会把记录折得过窄。
     avail = shutil.get_terminal_size(fallback=(100, 30)).columns - indent - 2
-    lines = [
-        ln for raw in ((text or "").splitlines() or [""]) for ln in _wrap(raw, avail)
-    ]
+    lines = [ln for raw in ((text or "").splitlines() or [""]) for ln in _wrap(raw, avail)]
     print(paint(head + lines[0], tint))
     _to_file(head + lines[0])
     for ln in lines[1:]:
@@ -297,34 +292,39 @@ def _emit(role: str, text: str, stamp: datetime | None = None, *, cap: bool = Fa
 
 #: 业务语义标签 → 显示角色。记录层只发"发生了什么"（`kind`），角色归属是本层的决定。
 _ROLE_BY_KIND: dict[str, str] = {
-    "dispatch": "plat",         # delegate 委派
-    "supersede": "plat",        # 取代旧 Task
+    "dispatch": "plat",  # delegate 委派
+    "supersede": "plat",  # 取代旧 Task
     "delegate_failed": "plat",  # 委派以 failed 收场
-    "run_begin": "exec",        # run_task 开始（section）
-    "run_end": "exec",          # run_task 结束
-    "feed": "plat",             # 平台把用户原话投给待答任务（section）
-    "retry": "plat",            # 这一轮抖动、已重试一次（stream.stream_agent）
-    "stream_empty": "plat",     # 流式一步都没输出 → 退回 invoke 兜底（这一趟没有流式日志）
-    "run_fault": "exec",        # 重试过仍失败 → 这一轮没跑成（executor.run_task）
-    "ask": "exec",              # 执行器申报要信息（调了 `ask_user`）→ 这一轮结束
-    "delivered": "exec",        # 执行器交付了产物 → 这一轮结束
-    "writing": "exec",          # 正在写工具参数（写产物那段 —— 报"已收到 N 字"）
-    "artifact": "exec",         # 产物落盘了（ID / 标题 / 字数 / 路径）
+    "run_begin": "exec",  # run_task 开始（section）
+    "run_end": "exec",  # run_task 结束
+    "feed": "plat",  # 平台把用户原话投给待答任务（section）
+    "retry": "plat",  # 这一轮抖动、已重试一次（stream.stream_agent）
+    "stream_empty": "plat",  # 流式一步都没输出 → 退回 invoke 兜底（这一趟没有流式日志）
+    "run_fault": "exec",  # 重试过仍失败 → 这一轮没跑成（executor.run_task）
+    "ask": "exec",  # 执行器申报要信息（调了 `ask_user`）→ 这一轮结束
+    "delivered": "exec",  # 执行器交付了产物 → 这一轮结束
+    "writing": "exec",  # 正在写工具参数（写产物那段 —— 报"已收到 N 字"）
+    "artifact": "exec",  # 产物落盘了（ID / 标题 / 字数 / 路径）
 }
 
 #: 有专门渲染分支的 kind（不走上表那条摘要行的路）。
-_SPECIAL_KINDS = frozenset({
-    "ask_main",            # 试答：开一个挂着的块，PROMPT/RESPONSE 归并进来
-    "executor_briefing",   # 平台注入执行器的整份交接书（block）
-    "waiting",             # 主 agent 答不上 → 登记待答（note）
-    "relay",               # 待答透传（note）
-    "llm_io",              # 那次 LLM 调用的 PROMPT/RESPONSE/失败提示
-})
+_SPECIAL_KINDS = frozenset(
+    {
+        "ask_main",  # 试答：开一个挂着的块，PROMPT/RESPONSE 归并进来
+        "executor_briefing",  # 平台注入执行器的整份交接书（block）
+        "waiting",  # 主 agent 答不上 → 登记待答（note）
+        "relay",  # 待答透传（note）
+        "llm_io",  # 那次 LLM 调用的 PROMPT/RESPONSE/失败提示
+    }
+)
 
 #: 故意不上屏的 kind —— 只进日志文件。写在这里 = 一个表态（不是漏了）。
-_LOG_ONLY_KINDS = frozenset({
-    "nudge",   # 推执行器继续的提示词（正文已由 `handoff("推回去")` 记档）
-})
+_LOG_ONLY_KINDS = frozenset(
+    {
+        "nudge",  # 推执行器继续的提示词（正文已由 `handoff("推回去")` 记档）
+    }
+)
+
 
 def declared_kinds() -> set[str]:
     """展示层表过态的 kind —— 上面三个集合的并集。
@@ -333,6 +333,7 @@ def declared_kinds() -> set[str]:
     静默消失。测试拿这个函数断它覆盖 `trace.KINDS`。
     """
     return set(_ROLE_BY_KIND) | set(_SPECIAL_KINDS) | set(_LOG_ONLY_KINDS)
+
 
 #: 挂着的块：`[role, lines, ts]` —— 只用于把同一次 LLM 调用的 PROMPT/RESPONSE 归并成一块。
 _PENDING: list[object] | None = None
@@ -385,9 +386,12 @@ def _role_of(ev: dict[str, object]) -> str:
     key = repr(role)
     if key not in _WARNED_ROLE:
         _WARNED_ROLE.add(key)
-        _emit("plat", f"⚠️ 收到未知角色的事件：role={role!r}（type={ev.get('type')}）"
-                      f" —— 按「未知」上屏。合法值：{sorted(trace.ROLES)}",
-              stamp=ev.get("ts"))
+        _emit(
+            "plat",
+            f"⚠️ 收到未知角色的事件：role={role!r}（type={ev.get('type')}）"
+            f" —— 按「未知」上屏。合法值：{sorted(trace.ROLES)}",
+            stamp=ev.get("ts"),
+        )
     return "unknown"
 
 
@@ -404,17 +408,20 @@ _TOOL_NAMES_CAP = 2000
 def _on_dump(ev: dict[str, object]) -> None:
     """消息轨迹事件。消息对象就在事件里，所以文本用 `content`，谁说的看 `ev["role"]`，
     工具配对用 `(role, tool_call_id)`。"""
-    role = _role_of(ev)   # 配对键的一半，两个 agent 的 id 空间会撞（见 `_TOOL_NAMES`）
+    role = _role_of(ev)  # 配对键的一半，两个 agent 的 id 空间会撞（见 `_TOOL_NAMES`）
     who = _ROLE_LABEL.get(role, "未知角色")
     for m in ev["messages"]:
         if len(_TOOL_NAMES) >= _TOOL_NAMES_CAP:
-            _TOOL_NAMES.clear()   # 配对只在同一轮内，清空是安全的
+            _TOOL_NAMES.clear()  # 配对只在同一轮内，清空是安全的
         for c in getattr(m, "tool_calls", None) or []:
             if c.get("id"):
                 _TOOL_NAMES[(role, c["id"])] = str(c.get("name"))
             # 不截参数：`delegate(task=...)` 就是交接本身，砍了就看不到交接了什么。
-            _emit("tool", f"{who} → {c.get('name')}（{trace.brief_args(c.get('args') or {})}）",
-                  stamp=ev["ts"])
+            _emit(
+                "tool",
+                f"{who} → {c.get('name')}（{trace.brief_args(c.get('args') or {})}）",
+                stamp=ev["ts"],
+            )
         kind = type(m).__name__
         if kind == "AIMessage":
             continue  # 它说的话已由流式实时播过，dump 不重复播 AI 正文
@@ -423,8 +430,12 @@ def _on_dump(ev: dict[str, object]) -> None:
             name = _TOOL_NAMES.get((role, getattr(m, "tool_call_id", "") or ""), "?")
             if name in _READ_TOOLS:
                 # 读全文的工具一个字都不贴，见 `_READ_TOOLS`。
-                _emit("ret", f"{name} 的返回：（**读了全文，{len(content)} 字** —— "
-                             f"原文在{_READ_TOOLS[name]}里，**不在这里复述**）", stamp=ev["ts"])
+                _emit(
+                    "ret",
+                    f"{name} 的返回：（**读了全文，{len(content)} 字** —— "
+                    f"原文在{_READ_TOOLS[name]}里，**不在这里复述**）",
+                    stamp=ev["ts"],
+                )
             else:
                 _emit("ret", f"{name} 的返回：\n{content}", stamp=ev["ts"])
         elif kind == "SystemMessage":
@@ -445,8 +456,11 @@ def _on_event(ev: dict[str, object]) -> None:
 
     if t == "stream":
         # 谁说的按 `role` 枚举取，不从 `who` 的措辞里猜（见 `_role_of`）
-        _emit({trace.EXECUTOR: "say", trace.AGENT: "agent"}.get(_role_of(ev), "plat"),
-              str(ev["text"]), stamp=ev["ts"])
+        _emit(
+            {trace.EXECUTOR: "say", trace.AGENT: "agent"}.get(_role_of(ev), "plat"),
+            str(ev["text"]),
+            stamp=ev["ts"],
+        )
     elif t == "dump":
         _on_dump(ev)
     elif t == "section":
@@ -463,8 +477,7 @@ def _on_event(ev: dict[str, object]) -> None:
             _PENDING[1] += str(ev["text"]).splitlines() or [""]
         elif k == "executor_briefing":
             # 平台注入给执行器的整份交接书（任务 / 上次做到哪 / 历次答复 / 可读产物）
-            _emit("inject", "平台 → 执行器：本次交接的全部已知\n" + str(ev["text"]),
-                  stamp=ev["ts"])
+            _emit("inject", "平台 → 执行器：本次交接的全部已知\n" + str(ev["text"]), stamp=ev["ts"])
     elif t == "decision":
         # 接在挂着的块尾巴上：那是这次 LLM 调用的一端（PROMPT），四段是另一端；分开输出的话
         # 同一件事在屏幕上就是两个 DECIDE 块。没有挂着的块就自己输出一块。
@@ -479,9 +492,13 @@ def _on_event(ev: dict[str, object]) -> None:
         elif k == "relay":
             # 原文照上屏：这条 note 带的就是平台透传给用户的那段（执行器的原话），归属由 kind
             # 给 —— 不读文本，也不切前缀（`finalize: ` 是记录层的格式，见 `recorder._NOTE_HEAD`）。
-            _emit("ask", "平台 → 用户：" + str(ev["text"])
-                  + "\n（平台把执行器的话**原样**转达 —— 代码保证不丢）",
-                  stamp=ev["ts"])
+            _emit(
+                "ask",
+                "平台 → 用户："
+                + str(ev["text"])
+                + "\n（平台把执行器的话**原样**转达 —— 代码保证不丢）",
+                stamp=ev["ts"],
+            )
         elif k == "llm_io":
             # `llm_io` 的 note 必须看得见：它是"这次调用的 PROMPT 没逐字记"那条声明，
             # 静默丢掉就是违反"切了要标"。它落在块里原来该有 PROMPT 的位置。
@@ -493,20 +510,32 @@ def _on_event(ev: dict[str, object]) -> None:
             _emit(_ROLE_BY_KIND[k], str(ev["text"]), stamp=ev["ts"], cap=True)
     elif t == "cut":
         # 切一刀就得看得见：标记落在块的头，不必长在切口上。
-        _emit("plat", f"✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
-                      + (f"｜{ev['see']}" if ev.get("see") else ""),
-              stamp=ev["ts"], cap=True)
+        _emit(
+            "plat",
+            f"✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
+            + (f"｜{ev['see']}" if ev.get("see") else ""),
+            stamp=ev["ts"],
+            cap=True,
+        )
     # `handoff` 与未打 kind 的 note / section 只进日志文件，不上屏。
 
     # 收尾自检：kind 没归角色、没专门分支、又不在"只进日志"名单里，说明这一层没对它表过
     # 态，它就静默消失了。测试里会先红，这是运行时那道网。
-    if t in ("note", "section", "block") and k and k not in _ROLE_BY_KIND \
-            and k not in _SPECIAL_KINDS and k not in _LOG_ONLY_KINDS:
+    if (
+        t in ("note", "section", "block")
+        and k
+        and k not in _ROLE_BY_KIND
+        and k not in _SPECIAL_KINDS
+        and k not in _LOG_ONLY_KINDS
+    ):
         if k not in _WARNED_KIND:
             _WARNED_KIND.add(k)
-            _emit("plat", f"⚠️ 收到**没表过态**的 kind={k!r}（type={t}）—— 这一条没上屏。"
-                          "去 `chat._ROLE_BY_KIND` / `_SPECIAL_KINDS` / `_LOG_ONLY_KINDS` 里表态。",
-                  stamp=ev.get("ts"))
+            _emit(
+                "plat",
+                f"⚠️ 收到**没表过态**的 kind={k!r}（type={t}）—— 这一条没上屏。"
+                "去 `chat._ROLE_BY_KIND` / `_SPECIAL_KINDS` / `_LOG_ONLY_KINDS` 里表态。",
+                stamp=ev.get("ts"),
+            )
 
 
 def _turn_summary(snap: dict[str, object], elapsed: float) -> None:
@@ -522,8 +551,7 @@ def _turn_summary(snap: dict[str, object], elapsed: float) -> None:
     _emit(
         "ctx",
         f"主上下文 {ctx + sys_chars} 字（消息 {ctx} + system {sys_chars}）"
-        f"　｜　产物库正文 {body} 字　｜　本轮耗时 {elapsed:.0f}s"
-        + (f"\n{warn}" if warn else ""),
+        f"　｜　产物库正文 {body} 字　｜　本轮耗时 {elapsed:.0f}s" + (f"\n{warn}" if warn else ""),
     )
 
     tasks = snap.get("tasks") or []
@@ -532,8 +560,11 @@ def _turn_summary(snap: dict[str, object], elapsed: float) -> None:
     rows = []
     for t in tasks:
         mark = {
-            "completed": "✅", "waiting_for_input": "❓", "failed": "❌",
-            "running": "⏳", "superseded": "🔁",
+            "completed": "✅",
+            "waiting_for_input": "❓",
+            "failed": "❌",
+            "running": "⏳",
+            "superseded": "🔁",
         }.get(t["stage"], "?")
         rows.append(
             f"{mark} {t['id']}  {t['skill']:<20} 产物={t['artifacts'] or '（无）'}"
@@ -599,10 +630,12 @@ def _parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--thread", default="interactive-1")
     ap.add_argument(
-        "--exec-path", choices=["auto", "delegate", "inline"], default="auto",
+        "--exec-path",
+        choices=["auto", "delegate", "inline"],
+        default="auto",
         help="执行路径：auto 两条都开（默认，产品行为）｜ delegate **强制委派**（主 agent 拿不到"
-             "自己干的工具）｜ inline 强制主 agent 自己干（不给 delegate）。"
-             "⚠️ 想验「执行器那条链路」时用它，别靠碰运气 —— 见 sxagent/agent.EXEC_PATH",
+        "自己干的工具）｜ inline 强制主 agent 自己干（不给 delegate）。"
+        "⚠️ 想验「执行器那条链路」时用它，别靠碰运气 —— 见 sxagent/agent.EXEC_PATH",
     )
     return ap.parse_args()
 
@@ -629,7 +662,9 @@ def _banner(s: _Session, seed_note: str) -> None:
         print(f"  {seed_note} —— 你也可以自己往 skills 文件夹里加。\n")
 
 
-def _absorb(s: _Session, state: dict[str, object], text: str, t: float, *, answer_to: str = "") -> None:
+def _absorb(
+    s: _Session, state: dict[str, object], text: str, t: float, *, answer_to: str = ""
+) -> None:
     """把这一轮收进记录：快照、计数、摘要。
 
     `answer_to`：这一句是在答哪一条待答（主循环那条为空）。
@@ -637,7 +672,7 @@ def _absorb(s: _Session, state: dict[str, object], text: str, t: float, *, answe
     snap = snapshot(state, text, s.seen_len, len(s.turns) + 1, round(time.time() - t, 1))
     snap["input_source"] = "human"  # 用户当场打的，不是脚本预置
     if answer_to:
-        snap["answer_to"] = answer_to   # 记录层如实标这句在答哪一条
+        snap["answer_to"] = answer_to  # 记录层如实标这句在答哪一条
     s.turns.append(snap)
     s.seen_len = len(state.get("messages") or [])
     _turn_summary(snap, time.time() - t)
@@ -656,12 +691,15 @@ def _one_turn(s: _Session, text: str, *, answer_to: str = "") -> dict[str, objec
     if answer_to:
         payload["answer_to"] = answer_to
     try:
-        return aio.run(s.graph.ainvoke(payload, s.config))   # 同步宿主驱动协程
+        return aio.run(s.graph.ainvoke(payload, s.config))  # 同步宿主驱动协程
     except Exception as e:  # noqa: BLE001
-        s.turn_errors.append({
-            "turn": len(s.turns) + 1, "input": text,
-            "error": f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
-        })
+        s.turn_errors.append(
+            {
+                "turn": len(s.turns) + 1,
+                "input": text,
+                "error": f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
+            }
+        )
         print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
         print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
         return None
@@ -680,8 +718,11 @@ def _ask_loop(s: _Session, state: dict[str, object]) -> None:
         # 走 `_emit` 不走裸 print：裸 print 的长问题会被终端折到 0 列，续行和段头分不清。
         # 正文缩进 2 格：段头独占一行、正文成一块。
         print()
-        _emit("ask", f"执行器在问 · {p.get('skill')}\n"
-                     + "\n".join("  " + ln for ln in (q or "").splitlines() or [""]))
+        _emit(
+            "ask",
+            f"执行器在问 · {p.get('skill')}\n"
+            + "\n".join("  " + ln for ln in (q or "").splitlines() or [""]),
+        )
         _emit("task", "打字即答复；跳过打 skip，回 👤 说别的")
         # 空行不作数、跳过要明说，见 `_read_card_answer`。
         ans = _read_card_answer(color)
@@ -689,7 +730,7 @@ def _ask_loop(s: _Session, state: dict[str, object]) -> None:
             break
         t2 = time.time()
         state = _one_turn(s, ans, answer_to=p["id"])
-        if state is None:   # 投递那一轮也没跑成，同主循环
+        if state is None:  # 投递那一轮也没跑成，同主循环
             break
         _absorb(s, state, ans, t2, answer_to=p["id"])
 
@@ -731,9 +772,14 @@ def _session(s: _Session) -> None:
 
         s.error = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
         cut = len(s.error) - 500
-        print(f"\n⚠️ **会话中断**（平台故障）：{s.error[:500]}"
-              + (f"\n（**平台截断：还有 {cut} 字未显示**，全文见 {s.out_dir / 'results.json'}）"
-                 if cut > 0 else ""))
+        print(
+            f"\n⚠️ **会话中断**（平台故障）：{s.error[:500]}"
+            + (
+                f"\n（**平台截断：还有 {cut} 字未显示**，全文见 {s.out_dir / 'results.json'}）"
+                if cut > 0
+                else ""
+            )
+        )
 
 
 def _finish(s: _Session) -> None:
@@ -798,7 +844,7 @@ def main() -> None:
     )
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
-    session.use(args.thread)      # 进程就是一次会话：thread_id 进事件、日志带标识
+    session.use(args.thread)  # 进程就是一次会话：thread_id 进事件、日志带标识
 
     label = Path(args.skills).name or "skills"
     tag = f"interactive-{label}-{time.strftime('%m%d-%H%M%S')}"
@@ -815,8 +861,15 @@ def main() -> None:
     # 的目录一致，否则前后两份文件对不上。走函数而不是直接赋值，写错模块会当场报错。
     artifacts_mod.use_dir(out_dir / "artifacts" / f"{tag}__r1")
 
-    s = _Session(tag=tag, out_dir=out_dir, graph=graph, config=config, inst=inst,
-                 skills_dir=str(args.skills), t0=time.time())
+    s = _Session(
+        tag=tag,
+        out_dir=out_dir,
+        graph=graph,
+        config=config,
+        inst=inst,
+        skills_dir=str(args.skills),
+        t0=time.time(),
+    )
     _banner(s, seed_note)
     _session(s)
     _finish(s)

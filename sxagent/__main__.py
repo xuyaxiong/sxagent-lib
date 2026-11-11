@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -27,12 +26,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
-from sxagent import aio
-from sxagent import recorder, session, trace
+from sxagent import aio, recorder, session, trace
+from sxagent import artifacts as artifacts_mod
 from sxagent.config import describe
 from sxagent.graph import build, next_pending
 from sxagent.handoff.briefing import asked_text
-from sxagent import artifacts as artifacts_mod
 
 BAR = "─" * 74
 
@@ -45,8 +43,8 @@ _BLOCK_MAX_LINES = 12
 #: 说话的是谁 —— 按 `role` 枚举取（逻辑），不从 `who` 的措辞里猜。
 _ROLE_TAG = {trace.AGENT: "🤖 主 agent", trace.EXECUTOR: "🔧 执行器"}
 
-_last_stream_tag = ""      # 同一角色连着输出时，前缀只打一次
-_tool_names: dict[tuple[str, str], str] = {}   # (role, tool_call_id) → 工具名
+_last_stream_tag = ""  # 同一角色连着输出时，前缀只打一次
+_tool_names: dict[tuple[str, str], str] = {}  # (role, tool_call_id) → 工具名
 
 
 def _bullets(v: object) -> str:
@@ -74,7 +72,7 @@ def _on_event(ev: dict[str, object]) -> None:
     global _last_stream_tag
     t = ev.get("type")
     if t != "stream":
-        _last_stream_tag = ""   # 换个形状就把流式前缀重置（下次输出重新标谁在说）
+        _last_stream_tag = ""  # 换个形状就把流式前缀重置（下次输出重新标谁在说）
 
     if t == "stream":
         tag = _ROLE_TAG.get(ev.get("role") or "", f"· {ev.get('who') or '平台'}")
@@ -102,8 +100,10 @@ def _on_event(ev: dict[str, object]) -> None:
         print(f"   │   结果：{_bullets(ev['result'])}")
         print(f"   │   下一步：{ev['next']}")
     elif t == "cut":
-        print(f"   │ ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
-              + (f"｜{ev['see']}" if ev.get("see") else ""))
+        print(
+            f"   │ ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
+            + (f"｜{ev['see']}" if ev.get("see") else "")
+        )
     elif t == "dump":
         _on_dump(ev)
     # `handoff`（交接记录）只进日志文件、不上屏 —— 同 `chat.py` 的契约：它的内容上面那些
@@ -121,7 +121,7 @@ def _on_dump(ev: dict[str, object]) -> None:
             print(f"   │ 🧠 {who} → {c.get('name')}（{trace.brief_args(c.get('args') or {})}）")
         kind = type(m).__name__
         if kind == "AIMessage":
-            continue        # 它说的话已由流式实时播过（同 `chat._on_dump` 的契约）
+            continue  # 它说的话已由流式实时播过（同 `chat._on_dump` 的契约）
         content = str(m.content)
         if kind == "ToolMessage":
             name = _tool_names.get((role, str(getattr(m, "tool_call_id", "") or "")), "?")
@@ -167,8 +167,11 @@ def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="主 agent（完整 agent）＋ 技能 / Task / 执行器")
     ap.add_argument("--thread", default="sxagent-1")
     ap.add_argument("--say", help="非交互：只跑这一句")
-    ap.add_argument("--answer", default="",
-                    help="--say 模式下自动应答（不给就把问题打出来停住，不替用户编答案）")
+    ap.add_argument(
+        "--answer",
+        default="",
+        help="--say 模式下自动应答（不给就把问题打出来停住，不替用户编答案）",
+    )
     return ap.parse_args()
 
 
@@ -235,7 +238,7 @@ def _interactive(graph, config) -> None:
             break
         result = _turn(graph, config, text)
         if result is None:
-            continue          # 这一轮没跑成 → 接着问下一句（会话不死）
+            continue  # 这一轮没跑成 → 接着问下一句（会话不死）
         _dump(result)
         print(BAR)
 
@@ -272,7 +275,7 @@ def main() -> None:
 
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
-    trace.subscribe(_on_event)      # 显示层从这一刻起只认事件
+    trace.subscribe(_on_event)  # 显示层从这一刻起只认事件
 
     print(BAR)
     print(f"主 agent = 完整 agent（自己决定：直接答 / 自己干 / 委派） · 模型={describe()}")

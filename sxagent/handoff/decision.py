@@ -62,9 +62,19 @@ def emit_decision(
         raise ValueError(
             f"decision 的 result_by={result_by!r} 不在 {sorted(RESULT_BY)} 里（见 handoff.decision.RESULT_BY）"
         )
-    trace.emit({"type": "decision", "kind": "", "who": who, "q": q,
-                "given": given, "result": result, "next": nxt,
-                "result_by": result_by, "ts": trace.stamp()})
+    trace.emit(
+        {
+            "type": "decision",
+            "kind": "",
+            "who": who,
+            "q": q,
+            "given": given,
+            "result": result,
+            "next": nxt,
+            "result_by": result_by,
+            "ts": trace.stamp(),
+        }
+    )
 
 
 def render_decision(ev: dict[str, object]) -> str:
@@ -76,7 +86,9 @@ def render_decision(ev: dict[str, object]) -> str:
     """
     by = str(ev.get("result_by") or "llm")
     if by not in RESULT_BY:
-        raise ValueError(f"未知的 result_by={by!r}：合法值 {sorted(RESULT_BY)}（见 handoff.decision）")
+        raise ValueError(
+            f"未知的 result_by={by!r}：合法值 {sorted(RESULT_BY)}（见 handoff.decision）"
+        )
     hop, result_key = RESULT_BY[by]
     keys = {**_DECISION_KEYS, "result": result_key}
     sections: dict[str, str] = {}

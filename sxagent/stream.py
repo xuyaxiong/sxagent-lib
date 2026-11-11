@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from sxagent import trace
 
@@ -65,16 +64,19 @@ async def _stream_with_retry(graph, state, config, who: str, role: str):
                 raise
             # 走 `trace.note()` 而不直调 `_publish`：直调并写死 kind 会绕过 `_check_kind`，
             # 改名 / 打错时校验抓不到。
-            trace.note(f"⚠️ {who} 这一轮**基础设施抖动**（{type(e).__name__}: {e}）"
-                 "—— 这就重试一次（上面流出去的那半段作废）", kind="retry")
+            trace.note(
+                f"⚠️ {who} 这一轮**基础设施抖动**（{type(e).__name__}: {e}）"
+                "—— 这就重试一次（上面流出去的那半段作废）",
+                kind="retry",
+            )
 
 
 #: 写产物的进度。模型写产物时输出的是工具调用参数，`_chunk_text` 只认 content，那几分钟
 #: 一个字都上不了屏，所以这里按参数累计字数报进度。不点名工具：小工具几十字不报，
 #: `write_artifact` 一写几千字会报。
-_WRITE_REPORT_AT = 200        # 参数超过这么多字才开始报
-_WRITE_REPORT_EVERY = 1000    # 之后每多这么多字报一次
-_WRITE_REPORT_EVERY_S = 20    # 或者每这么久报一次（字少但很慢时）
+_WRITE_REPORT_AT = 200  # 参数超过这么多字才开始报
+_WRITE_REPORT_EVERY = 1000  # 之后每多这么多字报一次
+_WRITE_REPORT_EVERY_S = 20  # 或者每这么久报一次（字少但很慢时）
 
 
 def _tool_arg_delta(chunk) -> tuple[str, int]:
@@ -97,7 +99,7 @@ def _tool_arg_delta(chunk) -> tuple[str, int]:
 
 async def _stream_agent(graph, state, config, who: str, role: str):
     buf = ""
-    cur_id: str | None = None      # 当前这条 AI 消息的 id —— 换了消息就把 buf 落盘
+    cur_id: str | None = None  # 当前这条 AI 消息的 id —— 换了消息就把 buf 落盘
     #: 工具参数累计，写产物那一段靠它报进度
     tool_name = ""
     arg_chars = 0
@@ -106,8 +108,16 @@ async def _stream_agent(graph, state, config, who: str, role: str):
 
     def flush_line(line: str) -> None:
         if line.strip():
-            trace.emit({"type": "stream", "kind": "", "role": role, "who": who,
-                      "text": line, "ts": trace.stamp()})
+            trace.emit(
+                {
+                    "type": "stream",
+                    "kind": "",
+                    "role": role,
+                    "who": who,
+                    "text": line,
+                    "ts": trace.stamp(),
+                }
+            )
 
     def maybe_report() -> None:
         """参数够多了吗？够了就报一行进度。报的是事实（已收到多少字、过了多久），不是预测。"""
@@ -117,8 +127,10 @@ async def _stream_agent(graph, state, config, who: str, role: str):
         now = time.monotonic()
         # 第一次跨过 `_WRITE_REPORT_AT` 就报（那一行就是用户要的"开始"）—— 无条件比
         # "每多 1000 字"的话，第一条要等到 1000 字才出来（前 500 字仍然静音）。
-        if reported_chars and (arg_chars - reported_chars < _WRITE_REPORT_EVERY
-                               and now - reported_at < _WRITE_REPORT_EVERY_S):
+        if reported_chars and (
+            arg_chars - reported_chars < _WRITE_REPORT_EVERY
+            and now - reported_at < _WRITE_REPORT_EVERY_S
+        ):
             return
         trace.note(
             f"⏳ {who} 正在写 `{tool_name or '?'}`：**已收到 {arg_chars} 字**"
@@ -193,7 +205,5 @@ def _chunk_text(chunk) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "".join(
-            str(p.get("text") or "") if isinstance(p, dict) else str(p) for p in content
-        )
+        return "".join(str(p.get("text") or "") if isinstance(p, dict) else str(p) for p in content)
     return ""

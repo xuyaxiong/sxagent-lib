@@ -21,10 +21,9 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage
 
 from sxagent import config as sxagent_config
+from sxagent.config import app_root
 from sxagent.registry import registry
 from sxagent.skill_pack import ENTRY_NAME
-from sxagent.config import app_root
-
 
 # ──────────────────────────── token / 调用计数 ────────────────────────────
 
@@ -329,9 +328,10 @@ def _msg_record(m) -> dict[str, object]:
     }
 
 
-def snapshot(state: dict[str, object], user: str, prev_len: int, idx: int, wall_s: float) -> dict[str, object]:
-    from sxagent import trace
-    from sxagent import artifacts
+def snapshot(
+    state: dict[str, object], user: str, prev_len: int, idx: int, wall_s: float
+) -> dict[str, object]:
+    from sxagent import artifacts, trace
 
     msgs = state.get("messages") or []
     new = msgs[prev_len:]
@@ -361,7 +361,7 @@ def snapshot(state: dict[str, object], user: str, prev_len: int, idx: int, wall_
         #: `tool_call_id` 与 `tool_calls[].id` 配对，用来判这条返回是谁的。
         "messages": [_msg_record(m) for m in new],
         "new_msg_kinds": [type(m).__name__ for m in new],
-        "log": state.get("log") or [],          # 渲染记录（给人看 / `_run.md`）
+        "log": state.get("log") or [],  # 渲染记录（给人看 / `_run.md`）
         "actions": state.get("actions") or [],  # 结构化事实（断言读它，不读 log）
         "wall_s": wall_s,
     }
@@ -474,8 +474,11 @@ def _receipt_sections(handoff: dict[str, object]) -> list[tuple[str, str]]:
     from sxagent.handoff.receipt import is_rejection
 
     sections = handoff.get("sections") or {}
-    keys = (HOPS["receipt_rejected"] if is_rejection(str(handoff.get("kind") or ""))
-            else HOPS["receipt"])
+    keys = (
+        HOPS["receipt_rejected"]
+        if is_rejection(str(handoff.get("kind") or ""))
+        else HOPS["receipt"]
+    )
     return [(RECEIPT_LABEL.get(k, k), sections[k]) for k in keys if sections.get(k)]
 
 
@@ -502,18 +505,23 @@ def _turn_summary(turns: list[dict[str, object]], i: int) -> list[str]:
     out.append(
         "- 本轮输入：**真人当场输入**（`app.chat` 交互式跑，不是预置脚本）"
         if human
-        else "- 本轮输入：**脚本预置**（跑批 case 里写死的字符串）"
-        "，**不是真人即时输入**"
+        else "- 本轮输入：**脚本预置**（跑批 case 里写死的字符串），**不是真人即时输入**"
     )
     # 平台动作读对象自己渲染一句，不切日志句子。
     own = (
-        (t.get("actions") or [])[len(prev.get("actions") or []) :] if prev else (t.get("actions") or [])
+        (t.get("actions") or [])[len(prev.get("actions") or []) :]
+        if prev
+        else (t.get("actions") or [])
     )
     fed = [a for a in own if a.get("did") == "feed"]
     if fed:
         who = "、".join(f"`{x}`" for x in fed[0]["tasks"])
-        out.append(f"- 平台动作：把用户原话**原样**投给了 {len(fed[0]['tasks'])} 个待答任务（{who}）")
-    elif prev is not None and any(x.get("stage") == "waiting_for_input" for x in (prev.get("tasks") or [])):
+        out.append(
+            f"- 平台动作：把用户原话**原样**投给了 {len(fed[0]['tasks'])} 个待答任务（{who}）"
+        )
+    elif prev is not None and any(
+        x.get("stage") == "waiting_for_input" for x in (prev.get("tasks") or [])
+    ):
         out.append("- 平台动作：⚠️ 上一轮有待答，但本轮没看到投递记录")
     out.append("")
     return out
@@ -611,12 +619,10 @@ def _render_tool(m: dict[str, object], pairing: _ToolPairing, n: int) -> tuple[l
         elif tool == "read_skill":
             what, where = f"技能 `{target.get('skill_name', '?')}`", "见 `skills/`"
         else:
-            what = (f"技能文件 `{target.get('skill_name', '?')}"
-                    f"/{target.get('path', '?')}`")
+            what = f"技能文件 `{target.get('skill_name', '?')}/{target.get('path', '?')}`"
             where = "见 `skills/`"
         out += [
-            f"　**主 agent 读了{what} 的全文**"
-            f"（{len(content)} 字，原文不在这里复述 —— {where}）",
+            f"　**主 agent 读了{what} 的全文**（{len(content)} 字，原文不在这里复述 —— {where}）",
             "",
         ]
         return out, n
@@ -670,7 +676,8 @@ def _render_unknown(m: dict[str, object], n: int) -> tuple[list[str], int]:
         f"**{n}. {m.get('kind', '?')}**",
         "",
         "```",
-        content if len(content) <= 800
+        content
+        if len(content) <= 800
         else content[:800] + f"\n…（**平台截断：还有 {len(content) - 800} 字未显示**）",
         "```",
         "",
@@ -775,8 +782,12 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict[str, obj
         lines += [
             "## ⚠️ 这次运行没跑成",
             "```",
-            err[:3000] + (f"\n…（**平台截断：还有 {cut} 字未显示**，全文见同目录 `results.json`）"
-                          if cut > 0 else ""),
+            err[:3000]
+            + (
+                f"\n…（**平台截断：还有 {cut} 字未显示**，全文见同目录 `results.json`）"
+                if cut > 0
+                else ""
+            ),
             "```",
             "",
         ]

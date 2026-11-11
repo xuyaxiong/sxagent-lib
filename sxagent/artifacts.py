@@ -25,7 +25,6 @@ from langchain.tools import tool
 
 from sxagent import session, trace
 
-
 # ──────────────────────────── 产物类型（声明 + 硬性派发） ────────────────────────────
 
 #: 声明的文件类型 → 扩展名 —— 平台据此硬性派发保存。不嗅探内容：类型是产出方在交付时说的。
@@ -53,6 +52,7 @@ def artifact_slug(s: str, n: int = 40) -> str:
 # ──────────────────────────── 产物库（= 文件系统替身） ────────────────────────────
 #
 # 对外只有函数、不给 dict：换实现只动这个文件，调用方只认下面这几个函数。
+
 
 def get(aid: str) -> dict[str, str] | None:
     """按 ID 取产物记录（含正文）；没有就 None。
@@ -89,6 +89,7 @@ def chars() -> int:
 def clear() -> None:
     """清空 —— 跑批每个 case 开始前调它（`app.runtime.install`）。"""
     session.current().artifacts.clear()
+
 
 # 产物 ID 走 `Session.artifact_seq` 的发号器。用 `len(表) + 1` 有窗口：两个执行器会拿到
 # 同一个 ID，产物静默丢失。

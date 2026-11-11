@@ -21,9 +21,7 @@ from sxagent.config import get_model, log_prompt_verbatim
 # 压掉一条已知的 pydantic 序列化警告 —— 它是 `stream_mode="messages"` 的副作用，返回的结果
 # 是对的（同一个 runnable：`.invoke()` 不警告、`.stream()` 警告）。
 # 只压这一条（按消息正则匹配），不要用 `simplefilter("ignore")` 把别的警告一起埋了。
-warnings.filterwarnings(
-    "ignore", message=r".*Pydantic serializer warnings.*", category=UserWarning
-)
+warnings.filterwarnings("ignore", message=r".*Pydantic serializer warnings.*", category=UserWarning)
 
 
 async def safe_structured[T](
@@ -90,7 +88,9 @@ async def safe_structured[T](
                 trace.block(f"RESPONSE（{time.time() - t0:.1f}s）", str(r), kind="llm_io")
             return r
         except Exception as e:  # noqa: BLE001
-            trace.note(f"⚠️ 结构化输出失败（第 {attempt}/2 次）：{type(e).__name__}: {e}",
-                       kind="llm_io" if kind else "")
+            trace.note(
+                f"⚠️ 结构化输出失败（第 {attempt}/2 次）：{type(e).__name__}: {e}",
+                kind="llm_io" if kind else "",
+            )
     trace.note(f"⚠️ 两次都失败 → 退化到保守默认值 {default}", kind="llm_io" if kind else "")
     return default

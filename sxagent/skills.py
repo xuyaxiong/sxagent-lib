@@ -16,7 +16,6 @@ from dataclasses import dataclass
 
 from sxagent.registry import registry
 
-
 # ──────────────────────────── Skill 定义 ────────────────────────────
 
 
@@ -40,30 +39,32 @@ class Skill:
 #: 内置技能表 —— 登记进注册表，不再是一个模块级变量。
 #: 唯一持有者是 `sxagent.registry`；这里只是"内置的那一份"的声明。
 #: 不要写 `from sxagent.skills import SKILLS` —— 那会重新制造一个绑定点。
-registry.register_defaults({
-    "lesson-prep": Skill(
-        name="lesson-prep",
-        description="备课：产出教学设计要点（目标 / 重难点 / 教学过程提纲）",
-        instructions=(
-            "产出教学设计的要点：教学目标、重难点、教学过程提纲。精简，150 字以内。\n"
-            "**你需要知道这节课的「课题」和「课时」（第几课时）**"
-            "——不知道就先问，不要自己编，也不要用默认值代替。"
+registry.register_defaults(
+    {
+        "lesson-prep": Skill(
+            name="lesson-prep",
+            description="备课：产出教学设计要点（目标 / 重难点 / 教学过程提纲）",
+            instructions=(
+                "产出教学设计的要点：教学目标、重难点、教学过程提纲。精简，150 字以内。\n"
+                "**你需要知道这节课的「课题」和「课时」（第几课时）**"
+                "——不知道就先问，不要自己编，也不要用默认值代替。"
+            ),
         ),
-    ),
-    "guided-learning": Skill(
-        name="guided-learning",
-        description="导学单：产出学生用导学单要点（学习目标 / 预习任务 / 当堂检测）",
-        instructions=(
-            "产出导学单要点：学习目标、预习任务、当堂检测。精简，150 字以内。\n"
-            "**你需要知道「课时」（第几课时）**——不知道就先问。"
+        "guided-learning": Skill(
+            name="guided-learning",
+            description="导学单：产出学生用导学单要点（学习目标 / 预习任务 / 当堂检测）",
+            instructions=(
+                "产出导学单要点：学习目标、预习任务、当堂检测。精简，150 字以内。\n"
+                "**你需要知道「课时」（第几课时）**——不知道就先问。"
+            ),
         ),
-    ),
-    "quiz": Skill(
-        name="quiz",
-        description="随堂小测：产出 3 道随堂小题（含答案）",
-        instructions=(
-            "产出 3 道随堂小题（含答案）。精简，150 字以内。\n"
-            "**你需要知道「难度」**（基础 / 提升 / 挑战 三档）——不知道就先问。"
+        "quiz": Skill(
+            name="quiz",
+            description="随堂小测：产出 3 道随堂小题（含答案）",
+            instructions=(
+                "产出 3 道随堂小题（含答案）。精简，150 字以内。\n"
+                "**你需要知道「难度」**（基础 / 提升 / 挑战 三档）——不知道就先问。"
+            ),
         ),
-    ),
-})
+    }
+)

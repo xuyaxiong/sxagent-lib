@@ -14,15 +14,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Coroutine, TypeVar
-
-_T = TypeVar("_T")
+from collections.abc import Coroutine
 
 #: 进程级那个循环 —— 见不变量 1（为什么不能是 `asyncio.run`）。
 _LOOP = asyncio.new_event_loop()
 
 
-def run(coro: Coroutine[object, object, _T]) -> _T:
+def run[T](coro: Coroutine[object, object, T]) -> T:
     """在进程级那个循环上把 `coro` 跑完，返回结果。
 
     别在异步上下文里调它（会报 "cannot be called from a running event loop"）——

@@ -34,11 +34,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from sxagent import stream, trace
-from sxagent.agent import build_agent
-from sxagent.agent import dispatch  # 派发编排（两条路共用）
-from sxagent.handoff.briefing import Task, asked_text
+from sxagent.agent import (
+    build_agent,
+    dispatch,  # 派发编排（两条路共用）
+)
 from sxagent.handoff import render_hop  # 唯一那条渲染路（见 handoff/__init__）
+from sxagent.handoff.briefing import Task, asked_text
 from sxagent.handoff.ledger import render_ledger
+
 # 本模块不直接调执行器：走 `agent.dispatch`，那边用属性访问 `executor.run_task`（晚绑定）。
 from sxagent.registry import registry  # 技能注册表（唯一持有者）
 from sxagent.skills import Skill  # 技能领域
@@ -105,21 +108,28 @@ async def _deliver(
     历次答复累积在 `Task.qa` 上：执行器每次都是全新的 `run_task`，只带最新一条的话，用户
     答第二个就把第一个冲掉了。
     """
-    rec = {**t, "qa": [*(t.get("qa") or []),
-                       {"by": "用户", "q": t.get("asked") or "", "a": user}]}
+    rec = {**t, "qa": [*(t.get("qa") or []), {"by": "用户", "q": t.get("asked") or "", "a": user}]}
     trace.section(f"feed · 投递用户原话 → {t['id']} · {t['skill']}", kind="feed")
     trace.block("投过去的原话", user)
     trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
     # 谁答复了谁的什么问题：答复的是用户，回答的是执行器问的那句，平台只是转达。
-    trace.handoff("答复投递", "用户", "执行器", user,
-                  structured=f"平台转达｜在回答它问的那句：{asked_text(t)}"
-                             f"｜Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
+    trace.handoff(
+        "答复投递",
+        "用户",
+        "执行器",
+        user,
+        structured=f"平台转达｜在回答它问的那句：{asked_text(t)}"
+        f"｜Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）",
+    )
     # refs 要一起带上，否则执行器续跑时看不见前序产物。编排走 `dispatch`（两条路共用）：
     # run_task → 落账 → run_by → 试答重跑 → settle → 取代哑待答，顺序写两遍一定会漂。
     # trigger="feed" = 这轮是平台起的，没有回执，全文不在主 agent 上下文里。
     outcome, answer, mooted = await dispatch(
-        skill, rec, state.get("tasks") or [],
-        trigger="feed", messages=state.get("messages") or [],
+        skill,
+        rec,
+        state.get("tasks") or [],
+        trigger="feed",
+        messages=state.get("messages") or [],
     )
     logs: list[str] = []
     if answer:
@@ -145,9 +155,7 @@ async def _feed_waiting(state: State) -> tuple[list[Task], list[str]]:
     它只挑目标、逐条投。这是投递这条路上唯一的解除路径。
     """
     user = _last_human(state)
-    all_waiting = [
-        t for t in (state.get("tasks") or []) if t.get("stage") == "waiting_for_input"
-    ]
+    all_waiting = [t for t in (state.get("tasks") or []) if t.get("stage") == "waiting_for_input"]
     # 定向投递：只投 `answer_to` 指的那一条，标识由通道填、平台不猜。
     target = str(state.get("answer_to") or "").strip()
     waiting = [t for t in all_waiting if t.get("id") == target] if target else []
@@ -183,16 +191,15 @@ async def node_feed(state: State) -> dict[str, object]:
     # 投递之后执行器又问了吗 —— 判据是结构事实：投递过的那条落成了 `waiting_for_input`。
     fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
 
-    fed = [t["id"] for t in updated
-           if t.get("run_by") == "feed" and t.get("stage") != "superseded"]
+    fed = [t["id"] for t in updated if t.get("run_by") == "feed" and t.get("stage") != "superseded"]
     actions = (
-        [{"by": "platform.feed", "did": "feed", "tasks": fed,
-          "chars": len(_last_human(state))}]
-        if fed else []
+        [{"by": "platform.feed", "did": "feed", "tasks": fed, "chars": len(_last_human(state))}]
+        if fed
+        else []
     )
     return {
-        "tasks": updated,           # reducer 按 id 合并
-        "log": logs,                # `feed: …` —— reducer 是 operator.add
+        "tasks": updated,  # reducer 按 id 合并
+        "log": logs,  # `feed: …` —— reducer 是 operator.add
         "actions": actions,
         # 本轮信号必须在这唯一一条返回路径上写回
         "answer_to": "",
@@ -215,8 +222,14 @@ async def node_prepare(state: State) -> dict[str, object]:
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
     text = render_ledger(tasks)
     # 注入什么就记什么：这一行是平台每轮塞给主 agent 的东西，复盘时最该看到的就是它。
-    trace.handoff("台账", "平台", "主 agent", text,
-                  structured=f"Task × {len(tasks)} → render_ledger", full=True)
+    trace.handoff(
+        "台账",
+        "平台",
+        "主 agent",
+        text,
+        structured=f"Task × {len(tasks)} → render_ledger",
+        full=True,
+    )
     return {
         "messages": [SystemMessage(content=text)],
         "log": [f"prepare: 注入台账（{len(tasks)} 项，其中待答 {len(waiting)} 条）"],
@@ -232,6 +245,7 @@ def render_relay(waiting: list[Task]) -> str:
     贴的是 `Task.asked`（它申报的那句原话），不是 `report`——用户要答的是问题，不是那段
     自述。`asked` 缺失时显式说清，不静默降级。
     """
+
     def _one(t: Task) -> str:
         who = t.get("skill") or "?"
         # "取哪句、取不到怎么办"只有一处定义（`asked_text`），CLI 的提示符也用它
@@ -260,19 +274,30 @@ async def node_finalize(state: State) -> dict[str, object]:
     trace.note(block, kind="relay")
     # 机制那句随交接摘要走：正文已经由上面那条 note 落过，这里不再 `full=True` 重贴一遍
     # （`trace.handoff` 的规矩：别处 dump 过这一跳就不再 dump）。
-    trace.handoff("待答透传", "平台", "用户", block,
-                  structured=f"Task.asked × {len(waiting)} → AIMessage(injected_by=platform.finalize)"
-                             "｜**无条件**透传（不判断主 agent 问没问）")
+    trace.handoff(
+        "待答透传",
+        "平台",
+        "用户",
+        block,
+        structured=f"Task.asked × {len(waiting)} → AIMessage(injected_by=platform.finalize)"
+        "｜**无条件**透传（不判断主 agent 问没问）",
+    )
     return {
-    # 打 injected_by 标记，挂 `additional_kwargs`：不打的话记录层会把这条标成主 agent
-    # 说的，而不是去看"内容像不像执行器的话"。
-        "messages": [AIMessage(content=block, additional_kwargs={"injected_by": "platform.finalize"})],
+        # 打 injected_by 标记，挂 `additional_kwargs`：不打的话记录层会把这条标成主 agent
+        # 说的，而不是去看"内容像不像执行器的话"。
+        "messages": [
+            AIMessage(content=block, additional_kwargs={"injected_by": "platform.finalize"})
+        ],
         "log": [f"finalize: 透传 {len(waiting)} 条待答（原样贴执行器的话，无条件）"],
         # 同一刻记下结构化事实（断言读它，不读上面那句人话）
-        "actions": [{
-            "by": "platform.finalize", "did": "relay",
-            "tasks": [t["id"] for t in waiting], "chars": len(block),
-        }],
+        "actions": [
+            {
+                "by": "platform.finalize",
+                "did": "relay",
+                "tasks": [t["id"] for t in waiting],
+                "chars": len(block),
+            }
+        ],
     }
 
 
@@ -299,14 +324,16 @@ def _make_node_agent(main_agent):
     用 `stream` 不用 `invoke`：后者要整个循环跑完才返回，那一段全程静默。行为不变，返回
     的仍是最终 state。是工厂不是节点，`main_agent` 要靠闭包带进去。
     """
+
     async def node_agent(state: State, config: RunnableConfig) -> dict[str, object]:
         out: dict[str, object] = {}
         prev_n = len(state.get("messages") or [])
         logs: list[str] = []
         step = 0
         # `stream_agent` 顺带把每个字也写进日志（累积到换行写一行），那几十秒不再黑屏。
-        async for chunk in stream.stream_agent(main_agent, state, config, "主 agent",
-                                              role=trace.AGENT):
+        async for chunk in stream.stream_agent(
+            main_agent, state, config, "主 agent", role=trace.AGENT
+        ):
             out = chunk
             msgs = chunk.get("messages") or []
             new = msgs[prev_n:]
@@ -321,7 +348,7 @@ def _make_node_agent(main_agent):
                 trace.note(line)
                 logs.append(line)
         if not out:  # 理论上不会（stream 至少输出一次最终 state）—— 兜一下，别把状态弄丢
-    # 这条兜底必须说话：走到这里等于这一趟全程没有流式日志，正是要治的黑屏。
+            # 这条兜底必须说话：走到这里等于这一趟全程没有流式日志，正是要治的黑屏。
             trace.note(
                 "⚠️ 流式**一步都没输出** → 退回 `invoke` 兜底：**这一趟没有流式日志**，"
                 "跑完才回来。正常不该发生 —— 见到这条要查 `stream` 为什么是空的。",

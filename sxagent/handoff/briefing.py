@@ -107,8 +107,10 @@ def asked_text(t: Task) -> str:
     if q:
         return q
     # 不许静默退回 `report`：说清"没有"，再把它最后说的那段附上。
-    return (f"（**这一条没留下问题原话**；它最后说的是："
-            f"{_flat(t.get('report')) or '（它一个字都没说）'}）")
+    return (
+        f"（**这一条没留下问题原话**；它最后说的是："
+        f"{_flat(t.get('report')) or '（它一个字都没说）'}）"
+    )
 
 
 def _flat(text: object) -> str:
@@ -167,11 +169,13 @@ def _index_block(hop: str, aids: list[str], tail: str) -> str | None:
     ids = [a for a in aids if a]
     if not ids:
         return None
-    return "\n".join([
-        *section_head(hop),
-        *[f"{BODY}{x}" for x in _index(ids)],
-        f"{BODY}{tail}",
-    ])
+    return "\n".join(
+        [
+            *section_head(hop),
+            *[f"{BODY}{x}" for x in _index(ids)],
+            f"{BODY}{tail}",
+        ]
+    )
 
 
 def _block_task(task: Task) -> str:
@@ -204,8 +208,9 @@ def _block_answered(task: Task) -> str | None:
 
     要成对：`report` 是覆盖写的，只存答案的话第二次重入之后旧答案就成了没有指涉的孤儿。
     """
-    qa = [x for x in (task.get("qa") or [])
-          if isinstance(x, dict) and str(x.get("a") or "").strip()]
+    qa = [
+        x for x in (task.get("qa") or []) if isinstance(x, dict) and str(x.get("a") or "").strip()
+    ]
     report = (task.get("report") or "").strip()
     if not (qa or report):
         return None
@@ -255,10 +260,12 @@ def _block_resume(task: Task) -> str | None:
     """⑤ 续跑提示 —— 只有重入才说：首跑说"接着干"会让它以为有前情。"""
     if not (task.get("report") or task.get("qa")):
         return None
-    return "\n".join([
-        *section_head("resume"),
-        f"{BODY}接着已有的工作继续，**不要重复已完成的工作**。",
-    ])
+    return "\n".join(
+        [
+            *section_head("resume"),
+            f"{BODY}接着已有的工作继续，**不要重复已完成的工作**。",
+        ]
+    )
 
 
 def render_briefing(task: Task) -> str:
@@ -271,10 +278,16 @@ def render_briefing(task: Task) -> str:
         _block_task(task),
         _block_user_turns(task),
         _block_answered(task),
-        _index_block("already_produced", task.get("artifacts") or [],
-                     "（这次要**在它基础上补全**，提交完整版；不要从零重写。）"),
-        _index_block("readable", task.get("refs") or [],
-                     "（这是清单，不是正文。要用哪一份就用 read_artifact 读全文，不要凭标题猜。）"),
+        _index_block(
+            "already_produced",
+            task.get("artifacts") or [],
+            "（这次要**在它基础上补全**，提交完整版；不要从零重写。）",
+        ),
+        _index_block(
+            "readable",
+            task.get("refs") or [],
+            "（这是清单，不是正文。要用哪一份就用 read_artifact 读全文，不要凭标题猜。）",
+        ),
         _block_resume(task),
     ]
     return "\n\n".join(b for b in blocks if b)
@@ -344,8 +357,7 @@ def moot_older_waiting(done: Task, tasks: list[Task]) -> list[Task]:
             continue
         t_turns = t.get("user_turns") or []
         # 判据②：快照必须前缀延长（用户在这条之后又说过话）。
-        if (not t_turns or len(t_turns) >= len(done_turns)
-                or done_turns[: len(t_turns)] != t_turns):
+        if not t_turns or len(t_turns) >= len(done_turns) or done_turns[: len(t_turns)] != t_turns:
             continue
         out.append({**t, "stage": "superseded"})
         # 取代要留痕（"显式"那一半）：说清谁被谁取代、依据是什么 ——

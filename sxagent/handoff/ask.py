@@ -58,9 +58,7 @@ def _item(m: BaseMessage) -> str:
     return "\n".join([f"- {_who(m)}：", *body_lines(body, BODY)])
 
 
-def build_prompt(
-    skill_name: str, task: str, outcome: Outcome, messages: list[BaseMessage]
-) -> str:
+def build_prompt(skill_name: str, task: str, outcome: Outcome, messages: list[BaseMessage]) -> str:
     """试答那一步喂给主 agent 的全部输入 —— 抽成纯函数是为了可单测。
 
     走唯一那条渲染路（`render_hop`）：段名 0 列 · 来源 2 列 · 段体 2 列。
@@ -71,17 +69,20 @@ def build_prompt(
     """
     msgs = list(messages)
     history = "\n".join(_item(m) for m in msgs)
-    return render_hop("ask", {
-        # 要什么 = 工具参数里的原话（结构），不是从它的话里挑出来的
-        "asked": str(getattr(outcome, "asked", "") or "").strip(),
-        "task": f"（委派给「{skill_name}」）\n{str(task or '').strip()}",
-        "report": str(getattr(outcome, "report", "") or "").strip(),
-        # "全部 N 条、全文、不截断"写在段体里 —— 它是内容的一部分，不是"来源"
-        # （来源那一行回答的是"这句是谁说的"）。
-        "ask_context": f"（全部 {len(msgs)} 条，全文，不截断）\n{history}",
-        "ask_decide": (
-            "你的上下文里**有没有它需要的信息**？\n"
-            "- 有（用户之前说过）→ `can_answer=true`，`answer` 里给出补充内容，**原话照搬**\n"
-            "- 没有 → `can_answer=false`，**不要编造**"
-        ),
-    })
+    return render_hop(
+        "ask",
+        {
+            # 要什么 = 工具参数里的原话（结构），不是从它的话里挑出来的
+            "asked": str(getattr(outcome, "asked", "") or "").strip(),
+            "task": f"（委派给「{skill_name}」）\n{str(task or '').strip()}",
+            "report": str(getattr(outcome, "report", "") or "").strip(),
+            # "全部 N 条、全文、不截断"写在段体里 —— 它是内容的一部分，不是"来源"
+            # （来源那一行回答的是"这句是谁说的"）。
+            "ask_context": f"（全部 {len(msgs)} 条，全文，不截断）\n{history}",
+            "ask_decide": (
+                "你的上下文里**有没有它需要的信息**？\n"
+                "- 有（用户之前说过）→ `can_answer=true`，`answer` 里给出补充内容，**原话照搬**\n"
+                "- 没有 → `can_answer=false`，**不要编造**"
+            ),
+        },
+    )
