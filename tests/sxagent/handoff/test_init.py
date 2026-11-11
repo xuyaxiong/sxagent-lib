@@ -8,7 +8,13 @@
 
 from __future__ import annotations
 
-from sxagent.handoff import HOPS, SECTION
+from sxagent.executor import ExecOutcome
+from sxagent.handoff import HOPS, SECTION, Outcome
+
+
+def test_exec_outcome_satisfies_the_contract() -> None:
+    """`Outcome` 是契约、`ExecOutcome` 是实现 —— 两边脱节（实现少了一个消费方要读的字段）这里红。"""
+    assert isinstance(ExecOutcome(), Outcome)
 
 
 def test_every_hop_section_is_declared() -> None:
