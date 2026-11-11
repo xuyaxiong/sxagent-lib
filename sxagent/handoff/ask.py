@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sxagent import trace
 from sxagent.handoff import BODY, INJECTED, Outcome, body_lines, render_hop
 
 if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
@@ -47,10 +48,18 @@ def _who(m: BaseMessage) -> str:
 def _item(m: BaseMessage) -> str:
     """一条消息 → 一个列表项（多行的整块缩在下一层）。
 
+    带工具调用的消息把调用也写上：主 agent 常把要求写进 `delegate(task=…)`，不写它就看不见
+    自己说过什么。参数走 `trace.brief_args` —— 正文类参数只留字数，`write_artifact` 那几千字
+    正文不该灌进来。
+
     一张单子要么整块在下一层，要么别塞进来 —— 单行拼法会把工具返回 / 平台注入那张单子的
     第一行粘在列表项后面、段名落回和 `- ` 同一列，读的人分不清哪个是哪个。
     """
-    body = str(m.content)
+    calls = [
+        f"（调了工具）`{c.get('name')}`：{trace.brief_args(c.get('args') or {})}"
+        for c in getattr(m, "tool_calls", None) or []
+    ]
+    body = "\n".join([*str(m.content).splitlines(), *calls])
     lines = body.splitlines() or [""]
     if len(lines) == 1:
         return f"- {_who(m)}：{lines[0]}"
