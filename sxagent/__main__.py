@@ -25,7 +25,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from sxagent import aio
 from sxagent import recorder, session, trace
@@ -69,7 +69,7 @@ def _capped(text: str) -> str:
     return "\n".join([*keep, f"…（还有 {len(lines) - _BLOCK_MAX_LINES} 行，全文见日志文件）"])
 
 
-def _on_event(ev: dict) -> None:
+def _on_event(ev: dict[str, object]) -> None:
     """事件总线的订阅入口 —— 展示层从这里拿结构化事实，自己排版上屏。"""
     global _last_stream_tag
     t = ev.get("type")
@@ -110,7 +110,7 @@ def _on_event(ev: dict) -> None:
     # 形状已经各自播过一遍，这里再播就是同一个事实两副面孔。
 
 
-def _on_dump(ev: dict) -> None:
+def _on_dump(ev: dict[str, object]) -> None:
     """消息轨迹 —— 消息对象本身就在事件里，归属按 `ev["role"]` 取。"""
     role = ev.get("role") or ""
     who = _ROLE_TAG.get(role, f"· {role or '未知角色'}")
@@ -134,7 +134,7 @@ def _on_dump(ev: dict) -> None:
 # ──────────────────────────── 快照读数 ────────────────────────────
 
 
-def _ctx_chars(messages: list) -> int:
+def _ctx_chars(messages: list[BaseMessage]) -> int:
     total = 0
     for m in messages:
         total += len(str(m.content))
@@ -143,7 +143,7 @@ def _ctx_chars(messages: list) -> int:
     return total
 
 
-def _dump(result: dict) -> None:
+def _dump(result: dict[str, object]) -> None:
     """回合末的读数（Task 表 ＋ 上下文体积）—— 事件里没有的东西，从快照读。"""
     tasks = result.get("tasks") or []
     print(f"   │ ── Task（只记委派出去的工作，共 {len(tasks)} 个）──")
@@ -172,13 +172,13 @@ def _parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def _turn(graph, config, text: str, *, answer_to: str = "") -> dict | None:
+def _turn(graph, config, text: str, *, answer_to: str = "") -> dict[str, object] | None:
     """跑一轮 —— 没跑成就按轮兜住、说清原因、返回 `None`（会话不死）。
 
     `answer_to`：这条消息是在回答哪个待答任务 —— 由通道填（下面那个答复提示符），
     平台不猜。
     """
-    init: dict = {"messages": [HumanMessage(text)], "log": []}
+    init: dict[str, object] = {"messages": [HumanMessage(text)], "log": []}
     if answer_to:
         init["answer_to"] = answer_to
     try:

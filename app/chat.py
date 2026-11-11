@@ -335,7 +335,7 @@ def declared_kinds() -> set[str]:
     return set(_ROLE_BY_KIND) | set(_SPECIAL_KINDS) | set(_LOG_ONLY_KINDS)
 
 #: 挂着的块：`[role, lines, ts]` —— 只用于把同一次 LLM 调用的 PROMPT/RESPONSE 归并成一块。
-_PENDING: list | None = None
+_PENDING: list[object] | None = None
 
 #: 播报行的长度上限（超了带标记截断）—— 只对机制层摘要行生效，决策块 / 注入块不截。
 _LIVE_CAP = 400
@@ -349,7 +349,7 @@ def _close_pending() -> None:
         _PENDING = None
 
 
-def _render_decision(ev: dict, *, with_who: bool = True) -> str:
+def _render_decision(ev: dict[str, object], *, with_who: bool = True) -> str:
     """决策事件 → 显示文本。排版归 `handoff.decision.render_decision`，本层只加载体：
     段头一行，整体缩 2 格。
 
@@ -374,7 +374,7 @@ _WARNED_KIND: set[str] = set()
 _ROLE_LABEL = {trace.AGENT: "主 agent", trace.EXECUTOR: "执行器"}
 
 
-def _role_of(ev: dict) -> str:
+def _role_of(ev: dict[str, object]) -> str:
     """事件里的角色，只认枚举值，不从措辞认。
 
     取不到或值不合法就当场吼一声（同一个值只吼一次），按"未知"上屏，不猜。
@@ -401,7 +401,7 @@ _TOOL_NAMES: dict[tuple[str, str], str] = {}
 _TOOL_NAMES_CAP = 2000
 
 
-def _on_dump(ev: dict) -> None:
+def _on_dump(ev: dict[str, object]) -> None:
     """消息轨迹事件。消息对象就在事件里，所以文本用 `content`，谁说的看 `ev["role"]`，
     工具配对用 `(role, tool_call_id)`。"""
     role = _role_of(ev)   # 配对键的一半，两个 agent 的 id 空间会撞（见 `_TOOL_NAMES`）
@@ -432,7 +432,7 @@ def _on_dump(ev: dict) -> None:
             _emit("inject", f"平台 → 主 agent（每轮注入的任务台账）：\n{content}", stamp=ev["ts"])
 
 
-def _on_event(ev: dict) -> None:
+def _on_event(ev: dict[str, object]) -> None:
     """事件总线的订阅入口：展示层从这里拿结构化事实，自己排版上屏。"""
     global _PENDING
     t, k = ev.get("type"), ev.get("kind") or ""
@@ -509,7 +509,7 @@ def _on_event(ev: dict) -> None:
                   stamp=ev.get("ts"))
 
 
-def _turn_summary(snap: dict, elapsed: float) -> None:
+def _turn_summary(snap: dict[str, object], elapsed: float) -> None:
     """回合小结：任务台账和主上下文读数。
 
     这一轮的话、工具调用、试答、投递已由事件订阅按真实时序播过，这里只补事件里没有的。
@@ -571,16 +571,16 @@ class _Session:
     tag: str
     out_dir: Path
     graph: object
-    config: dict
+    config: dict[str, object]
     #: `install()` 的返回（counter / writes / run_tasks / fault…），收尾写进 results.json。
-    inst: dict
+    inst: dict[str, object]
     skills_dir: str
     t0: float
     #: 跑成了的轮（`results.json` 的 `turns`）。
-    turns: list[dict] = field(default_factory=list)
+    turns: list[dict[str, object]] = field(default_factory=list)
     #: 没跑成的轮（平台故障）。单独记：`turns` 里只放跑成了的轮，但"失败过"这件事也得进
     #: 记录，不然 results.json 看着像一切正常。
-    turn_errors: list[dict] = field(default_factory=list)
+    turn_errors: list[dict[str, object]] = field(default_factory=list)
     #: 主 agent 上下文读到第几条了，每轮比上一轮多出来的就是这一轮的增量。
     seen_len: int = 0
     #: 会话级的异常（按轮兜住的不算，见 `_one_turn`）。
@@ -629,7 +629,7 @@ def _banner(s: _Session, seed_note: str) -> None:
         print(f"  {seed_note} —— 你也可以自己往 skills 文件夹里加。\n")
 
 
-def _absorb(s: _Session, state: dict, text: str, t: float, *, answer_to: str = "") -> None:
+def _absorb(s: _Session, state: dict[str, object], text: str, t: float, *, answer_to: str = "") -> None:
     """把这一轮收进记录：快照、计数、摘要。
 
     `answer_to`：这一句是在答哪一条待答（主循环那条为空）。
@@ -644,7 +644,7 @@ def _absorb(s: _Session, state: dict, text: str, t: float, *, answer_to: str = "
     print()
 
 
-def _one_turn(s: _Session, text: str, *, answer_to: str = "") -> dict | None:
+def _one_turn(s: _Session, text: str, *, answer_to: str = "") -> dict[str, object] | None:
     """跑一轮，返回新的 `state`；这一轮没跑成就记进 `turn_errors` 并返回 `None`。
 
     一轮没跑成不等于结束会话：说清原因，提示符接着来。`graph.ainvoke` 是阻塞的（一轮 2–3
@@ -652,7 +652,7 @@ def _one_turn(s: _Session, text: str, *, answer_to: str = "") -> dict | None:
     """
     import traceback
 
-    payload: dict = {"messages": [HumanMessage(text)], "log": []}
+    payload: dict[str, object] = {"messages": [HumanMessage(text)], "log": []}
     if answer_to:
         payload["answer_to"] = answer_to
     try:
@@ -667,7 +667,7 @@ def _one_turn(s: _Session, text: str, *, answer_to: str = "") -> dict | None:
         return None
 
 
-def _ask_loop(s: _Session, state: dict) -> None:
+def _ask_loop(s: _Session, state: dict[str, object]) -> None:
     """待答子循环：一次摆一个。
 
     这个提示符就是通道：在它下面打的字属于那一条请求。摆哪一条由 `graph.next_pending`

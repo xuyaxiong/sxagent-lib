@@ -21,14 +21,16 @@ from __future__ import annotations
 import itertools
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from sxagent import stream, trace
 from sxagent.config import get_model
 from sxagent.handoff import FaultKind, OutcomeStatus, render_hop
+from sxagent.handoff.briefing import Turn  # 用户原话快照的形状
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
 from sxagent.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
 from sxagent.handoff.nudge import nudge_text  # 推回去的模板
@@ -38,6 +40,9 @@ from sxagent.artifacts import (
 )
 from sxagent.skill_pack import read_skill_file, skill_file_prompt  # 技能包文件（磁盘）＋ 提示块（单源）
 from sxagent.skills import Skill  # 技能领域
+
+if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
+    from langgraph.graph.state import CompiledStateGraph
 
 #: 平台约定 —— 尽量少。技能作者写什么都不会破坏它，因为它不要求作者做任何事。
 _PLATFORM_RULE = (
@@ -96,7 +101,7 @@ class ExecOutcome:
     fault_kind: FaultKind = ""
 
 
-def make_ask_user(asked: dict):
+def make_ask_user(asked: dict[str, str]):
     """造 `ask_user` 工具 —— 执行器要信息的唯一出口。
 
     它一调，平台直接看见两件事：它卡住了，它要什么（`question` 的原话）。之后平台让主
@@ -124,7 +129,7 @@ def make_ask_user(asked: dict):
     return ask_user
 
 
-def _user_turn_reader(user_turns: list[dict]):
+def _user_turn_reader(user_turns: list[Turn]):
     """造一个只认这次交接里那几轮的读取工具。
 
     用闭包不用模块级全局：并行 delegate 时两个执行器会互相覆盖。
@@ -179,16 +184,16 @@ class _Run:
     run_id: str
     t0: float
     #: 每轮重入的输入 —— 推回去时往它后面追加（见 `_decide_exit`）
-    messages: list
+    messages: list[BaseMessage]
     outcome: ExecOutcome
     #: 这次 run 写了哪些产物 —— 由工具自己记（闭包，按 run 归属）
     created: list[str]
     #: `ask_user` 申报的内容（闭包，同 `created`）
-    asked: dict
+    asked: dict[str, str]
 
 
-def _build_executor(user_turns: list[dict] | None,
-                    created: list[str], asked: dict):
+def _build_executor(user_turns: list[Turn] | None,
+                    created: list[str], asked: dict[str, str]):
     """建执行器那个子 agent：工具表加平台规则。
 
     `created` / `asked` 是工具闭包，两者得绑在同一份闭包上。
@@ -209,10 +214,12 @@ def _build_executor(user_turns: list[dict] | None,
     )
 
 
-def _open_run(skill: Skill, briefing: str, user_turns: list[dict] | None) -> tuple[_Run, object]:
+def _open_run(
+    skill: Skill, briefing: str, user_turns: list[Turn] | None
+) -> tuple[_Run, CompiledStateGraph]:
     """准备：建 agent、渲染这一趟的输入、写开跑前那几条日志。返回 `(运行态, agent)`。"""
     created: list[str] = []
-    asked: dict = {}
+    asked: dict[str, str] = {}
     agent = _build_executor(user_turns, created, asked)
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
@@ -260,7 +267,7 @@ def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str
     trace.note(note, kind="run_fault")
 
 
-async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
+async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None:
     """跑一轮：墙钟、流式跑、把结果吸收进 `outcome`。
 
     返回这一轮的 `state`；没跑成就返回 `None`，故障已经记进 `outcome`，调用方看到
@@ -317,7 +324,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
     return resp
 
 
-def _decide_exit(run: _Run, resp: dict, round_i: int) -> str:
+def _decide_exit(run: _Run, resp: dict[str, object], round_i: int) -> str:
     """判出口：这一轮跑完了，按结构看下一步怎么走。
 
     返回 `"stop"`（有出口：申报要信息 / 交了产物）或 `"again"`（推回去接着跑，或已到
@@ -386,7 +393,9 @@ def _close_run(run: _Run) -> ExecOutcome:
     return outcome
 
 
-async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = None) -> ExecOutcome:
+async def run_task(
+    skill: Skill, briefing: str = "", user_turns: list[Turn] | None = None
+) -> ExecOutcome:
     """通用执行器：干活、判定出口、没出口就推它继续。
 
     `briefing` 是整份交接而不是增量——执行器用完即弃，每次都是重入。平台不解析、不抽取，
@@ -473,7 +482,7 @@ def _verdict_reason(outcome: ExecOutcome) -> tuple[str, str]:
     return why, nxt
 
 
-def _verdict(outcome: ExecOutcome, run_id: str) -> dict:
+def _verdict(outcome: ExecOutcome, run_id: str) -> dict[str, object]:
     """「任务完成没」这条判定记录的四个字段（纯函数，可单测）。
 
     前提是平台看得见的三件结构事实（申报、产物账、轮次，包括"没有"），结果是三态加命中
@@ -501,7 +510,7 @@ def _verdict(outcome: ExecOutcome, run_id: str) -> dict:
     }
 
 
-def _last_ai_text(resp: dict) -> str:
+def _last_ai_text(resp: dict[str, object]) -> str:
     """执行器的报告，取最后一条有内容的 AI 消息。
 
     只用于给主 agent 的摘要，不参与任何判断——平台只看结构，而这句原样进回执（标着

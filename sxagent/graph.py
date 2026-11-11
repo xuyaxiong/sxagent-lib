@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import operator
-from typing import TYPE_CHECKING, Annotated, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Annotated, NotRequired, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -41,6 +41,7 @@ from sxagent.handoff import render_hop  # 唯一那条渲染路（见 handoff/__
 from sxagent.handoff.ledger import render_ledger
 # 本模块不直接调执行器：走 `agent.dispatch`，那边用属性访问 `executor.run_task`（晚绑定）。
 from sxagent.registry import registry  # 技能注册表（唯一持有者）
+from sxagent.skills import Skill  # 技能领域
 
 
 def _merge_tasks(old: list[Task] | None, new: list[Task] | None) -> list[Task]:
@@ -49,7 +50,7 @@ def _merge_tasks(old: list[Task] | None, new: list[Task] | None) -> list[Task]:
     必须用 reducer：模型会并行发多个 `delegate`，每个都读到同一份旧 state，直接覆盖只会
     剩最后一个。
     """
-    merged: dict[str, dict] = {t["id"]: t for t in (old or [])}
+    merged: dict[str, Task] = {t["id"]: t for t in (old or [])}
     for t in new or []:
         merged[t["id"]] = t
     return list(merged.values())
@@ -63,7 +64,7 @@ class State(TypedDict):
     log: NotRequired[Annotated[list[str], operator.add]]
     #: 平台动作的结构化事实（谁做的 / 做了什么 / 涉及哪些 Task / 多少字）。断言与报告读它。
     #: 不许进 `AgentState` —— 它的 reducer 是 `operator.add`，子图回传每轮翻一倍。
-    actions: NotRequired[Annotated[list[dict[str, Any]], operator.add]]
+    actions: NotRequired[Annotated[list[dict[str, object]], operator.add]]
     #: 这条用户消息在回答哪个待答任务，由通道填。有它 → 只投给那一个；没有 → 一条都不投。
     #: 用后即清（写回 `""`）：不清会跟 checkpointer 活到下一轮。也不许进 `AgentState`。
     answer_to: NotRequired[str]
@@ -96,7 +97,9 @@ def _last_human(state: State) -> str:
     return ""
 
 
-async def _deliver(state: State, t: dict, skill: Any, user: str) -> tuple[dict, list[str], list[dict]]:
+async def _deliver(
+    state: State, t: Task, skill: Skill, user: str
+) -> tuple[Task, list[str], list[Task]]:
     """投一条待答。返回投递后的 Task、一行日志，以及被取代的旧 Task。
 
     历次答复累积在 `Task.qa` 上：执行器每次都是全新的 `run_task`，只带最新一条的话，用户
@@ -135,7 +138,7 @@ async def _deliver(state: State, t: dict, skill: Any, user: str) -> tuple[dict, 
     return rec, logs, mooted
 
 
-async def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
+async def _feed_waiting(state: State) -> tuple[list[Task], list[str]]:
     """把用户这条消息的原话投给它标明的那一个待答任务（`answer_to`）。
 
     不做任何判断——平台不替用户判断他的话算不算回答，那是语义判断，判错比多问一遍更糟。
@@ -156,7 +159,7 @@ async def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
             )
         return [], []
 
-    out: list[dict] = []
+    out: list[Task] = []
     logs = [f"feed: 定向投递 → {target}（`answer_to` 指的那条；其余待答不动）"]
     for t in waiting:
         skill = registry.get(t["skill"])
@@ -170,7 +173,7 @@ async def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     return out, logs
 
 
-async def node_feed(state: State) -> dict:
+async def node_feed(state: State) -> dict[str, object]:
     """① 把用户原话投给它标明的那一个待答任务，见 `_feed_waiting`。
 
     只有一条返回路径：`answer_to` / `fed_asking` 是本轮信号，多一条路就多一处可漏。
@@ -197,7 +200,7 @@ async def node_feed(state: State) -> dict:
     }
 
 
-async def node_prepare(state: State) -> dict:
+async def node_prepare(state: State) -> dict[str, object]:
     """② 把任务台账注入主 agent 上下文。只给事实，不替它做决定。
 
     投递已在 `feed` 里做完，这里读到的 `state["tasks"]` 已是最新。不注入的话，主 agent
@@ -223,7 +226,7 @@ async def node_prepare(state: State) -> dict:
 # ──────────────────────────── finalize：兜底补问 ────────────────────────────
 
 
-def render_relay(waiting: list[dict]) -> str:
+def render_relay(waiting: list[Task]) -> str:
     """待答转成贴给用户的那段文本。
 
     贴的是 `Task.asked`（它申报的那句原话），不是 `report`——用户要答的是问题，不是那段
@@ -241,7 +244,7 @@ def render_relay(waiting: list[dict]) -> str:
     return render_hop("relay", {"relay": "\n".join(_one(t) for t in waiting)})
 
 
-async def node_finalize(state: State) -> dict:
+async def node_finalize(state: State) -> dict[str, object]:
     """兜底：待答原样贴进回复，保证问题一定到用户手上。
 
     保证归代码，礼貌归提示词：主 agent 没照做也只是重复一句，不影响不丢。不靠 LLM 判断
@@ -276,7 +279,7 @@ async def node_finalize(state: State) -> dict:
 # ──────────────────────────── 待答：一次摆一个 ────────────────────────────
 
 
-def next_pending(state: State, skill: str = "") -> dict | None:
+def next_pending(state: State, skill: str = "") -> dict[str, object] | None:
     """当前该摆到用户面前的那一个待答，返回那条 Task（`None` = 没有）。
 
     一次只摆一个，通道决定归属。`skill` 给跑批用（并行派发时"第一个"不确定），CLI 不点名。
@@ -296,8 +299,8 @@ def _make_node_agent(main_agent):
     用 `stream` 不用 `invoke`：后者要整个循环跑完才返回，那一段全程静默。行为不变，返回
     的仍是最终 state。是工厂不是节点，`main_agent` 要靠闭包带进去。
     """
-    async def node_agent(state: State, config: RunnableConfig) -> dict:
-        out: dict = {}
+    async def node_agent(state: State, config: RunnableConfig) -> dict[str, object]:
+        out: dict[str, object] = {}
         prev_n = len(state.get("messages") or [])
         logs: list[str] = []
         step = 0

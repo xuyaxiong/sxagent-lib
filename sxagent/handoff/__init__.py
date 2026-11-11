@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 # ──────────────────────────── 段名 ────────────────────────────
 
@@ -113,6 +113,24 @@ TaskStage = Literal["running", "completed", "waiting_for_input", "failed", "supe
 #: - `timeout`：超了 `executor.MAX_WALL_S`，原样重派可以，老超时说明活该拆小；
 #: - `""`：没有故障。
 FaultKind = Literal["", "transient", "rejected", "timeout"]
+
+
+@runtime_checkable
+class Outcome(Protocol):
+    """执行器一趟的结果，平台据此决定任务状态 —— 只列消费方真的会读的那几样。
+
+    `executor.ExecOutcome` 是它的实现。契约住在这里，是因为 `handoff` 不能 import
+    `executor`（成环），而 briefing / receipt / ask 都要拿它当参数类型。两边脱节由测试盯着。
+    """
+
+    status: OutcomeStatus
+    artifacts: list[str]
+    report: str
+    asked: str
+    fault: str
+    fault_kind: FaultKind
+    rounds: int
+    wall_s: float
 
 
 # ──────────────────────────── 排版 ────────────────────────────

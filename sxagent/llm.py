@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import time
 import warnings
-from typing import Any
 
 from sxagent import trace
 from sxagent.config import get_model, log_prompt_verbatim
@@ -27,16 +26,16 @@ warnings.filterwarnings(
 )
 
 
-async def safe_structured(
-    schema: type,
+async def safe_structured[T](
+    schema: type[T],
     prompt: str,
-    default: Any,
+    default: T,
     *,
     tag: str = "",
     kind: str = "",
     log_prompt: bool = True,
     log_response: bool = True,
-) -> Any:
+) -> T:
     """结构化输出调用 + 兜底（重试一次 → 仍失败退化到 `default`）。
 
     实测 DashScope 偶发 `grammar validation or compilation failed: sandbox grammar compile

@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from sxagent import artifacts as artifacts_mod
 from sxagent import trace
 from sxagent.handoff import (
     BODY,
     FaultKind,
+    Outcome,
     OutcomeStatus,
     TaskStage,
     body_lines,
@@ -128,7 +129,7 @@ def _one_line(text: str, limit: int = _one_line_limit) -> str:
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
-def turn_lines(turns: list[dict]) -> list[str]:
+def turn_lines(turns: list[Turn]) -> list[str]:
     """用户原话索引：一行一轮——序号 · 字数 · 开头 · 它在回答什么。
 
     常驻的是每轮一行，成本与文本量无关；全文由 `read_user_turn(n)` 按需取。用户粘五万字，
@@ -279,7 +280,7 @@ def render_briefing(task: Task) -> str:
     return "\n\n".join(b for b in blocks if b)
 
 
-def absorb_outcome(rec: Task, outcome: Any) -> None:
+def absorb_outcome(rec: Task, outcome: Outcome) -> None:
     """把执行器的结果写进 Task，四个字段一个都不能少。
 
     `artifacts` 只在非空时覆盖：这一轮没产出，不能把上一轮的抹掉。
@@ -305,7 +306,7 @@ _STATUS_TO_STAGE: dict[OutcomeStatus, TaskStage] = {
 }
 
 
-def settle(rec: Task, outcome: Any) -> str:
+def settle(rec: Task, outcome: Outcome) -> str:
     """把一次执行结果落进 Task，状态迁移的唯一入口。
 
     先 `absorb_outcome` 再写 `stage`，顺序不能反。调用方常常已经先 absorb 过一次，这里
@@ -335,7 +336,7 @@ def moot_older_waiting(done: Task, tasks: list[Task]) -> list[Task]:
     过 stage 的副本，原 dict 不动；取代要留痕（`trace.note`，kind=`supersede`）。
     """
     done_turns = done.get("user_turns") or []
-    out: list[dict] = []
+    out: list[Task] = []
     for t in tasks:
         if t.get("id") == done.get("id") or t.get("skill") != done.get("skill"):
             continue

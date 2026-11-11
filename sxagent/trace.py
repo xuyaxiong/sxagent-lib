@@ -19,16 +19,19 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 from sxagent import session
 
+if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
+    from langchain_core.messages import BaseMessage
+
 #: 记录器槽：由装配处装（`recorder.py` 在 import 时自注册）。不装就没有日志文件，那是库的用法。
-_sink_record: Callable[[dict], None] | None = None
+_sink_record: session.Sink | None = None
 _sink_write: Callable[[str], None] | None = None
 
 
-def install_recorder(*, record: Callable[[dict], None], write: Callable[[str], None]) -> None:
+def install_recorder(*, record: session.Sink, write: Callable[[str], None]) -> None:
     """装上记录器——总线不认识它，只认这两个函数。
 
     `record(ev)` 把事件渲染成日志行；`write(line)` 写一行原文（标洞和"订阅者出错"用）。
@@ -75,7 +78,7 @@ class _Subscription:
 
     __slots__ = ("_owner", "_slot")
 
-    def __init__(self, owner: list, slot: list) -> None:
+    def __init__(self, owner: list[list[session.Sink]], slot: list[session.Sink]) -> None:
         self._owner, self._slot = owner, slot
 
     def cancel(self) -> None:
@@ -86,7 +89,7 @@ class _Subscription:
             pass
 
 
-def subscribe(fn: Callable[[dict], None]) -> _Subscription:
+def subscribe(fn: session.Sink) -> _Subscription:
     """订阅当前会话的事件总线，事件按发布顺序同步送达。
 
     订阅者抛异常不会影响业务：兜住并记进日志，展示层坏了最多是看不见。订阅挂在会话上而不是
@@ -97,7 +100,7 @@ def subscribe(fn: Callable[[dict], None]) -> _Subscription:
     return _Subscription(session.current().subs, slot)
 
 
-def _publish(ev: dict) -> None:
+def _publish(ev: dict[str, object]) -> None:
     """发一个事件：先记录器（唯一落盘者），再同步送当前会话的订阅者。
 
     记录器不走订阅者那张网：展示层坏了只是看不见，记录层丢一条却是权威记录破了洞，
@@ -128,7 +131,7 @@ def _publish(ev: dict) -> None:
                 )
 
 
-def _mark_hole(ev: dict, e: Exception) -> None:
+def _mark_hole(ev: dict[str, object], e: Exception) -> None:
     """记录器渲染失败 → 在日志里把洞标出来。标洞本身也兜住，但不许静默。"""
     if _sink_write is None:  # 没装记录器 —— 连"洞"都无处可标（库的用法）
         return
@@ -150,7 +153,7 @@ EXECUTOR = "executor"
 ROLES = frozenset({AGENT, EXECUTOR})
 
 
-def check_role(role: Any, where: str) -> str:
+def check_role(role: object, where: str) -> str:
     """角色只能是枚举值 —— 传错就当场报错，不许静默当成主 agent。"""
     if role not in ROLES:
         raise ValueError(
@@ -234,7 +237,7 @@ def handoff(
               "text": text, "structured": structured, "full": full, "ts": stamp()})
 
 
-def emit(ev: dict) -> None:
+def emit(ev: dict[str, object]) -> None:
     """发一个已经是最终形状的事件，给领域包自己的发射器用。
 
     领域包（如 `handoff.decision`）发事件走这一条，总线就不必 import 领域包。校验一样跑：
@@ -253,7 +256,7 @@ def cut(where: str, kept: int, total: int, *, see: str = "") -> None:
               "total": total, "see": see, "ts": stamp()})
 
 
-def dump_trace(tag: str, messages: list, *, role: str) -> None:
+def dump_trace(tag: str, messages: list[BaseMessage], *, role: str) -> None:
     """把一整条消息轨迹作为事件发出去，事件里带的是消息对象本身。
 
     展示层靠 `tool_call_id` 配对、靠 `additional_kwargs` 认注入，不反推结构。`role` 必填。
@@ -272,7 +275,7 @@ def dump_trace(tag: str, messages: list, *, role: str) -> None:
 BODY_ARGS = frozenset({"content"})
 
 
-def brief_args(args: Any, limit: int = 120) -> str:
+def brief_args(args: object, limit: int = 120) -> str:
     """工具参数的一行摘要 —— 只有 `BODY_ARGS` 里的正文类参数会被压成字数。"""
     if not isinstance(args, dict):
         return str(args)
@@ -283,7 +286,7 @@ def brief_args(args: Any, limit: int = 120) -> str:
     return ", ".join(parts)
 
 
-def tool_calls_of(messages: list) -> list[tuple[str, str]]:
+def tool_calls_of(messages: list[BaseMessage]) -> list[tuple[str, str]]:
     """从消息里抽出全部工具调用 —— `(名字, 参数摘要)`，按发生顺序。
 
     主 agent 的工具调用不进 dump 轨迹，日志要记全就得从消息里抽一遍。
@@ -295,7 +298,7 @@ def tool_calls_of(messages: list) -> list[tuple[str, str]]:
     return out
 
 
-def render_message(m) -> str:
+def render_message(m: BaseMessage) -> str:
     """把一条 LangChain 消息渲染成可读文本（记录器落盘用）。这里不截断。
 
     日志是原始记录，"平台注入了什么、agent 说了什么"是优化的唯一观察窗口。AI 的话只写

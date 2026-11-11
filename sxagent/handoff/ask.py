@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
-from sxagent.handoff import BODY, INJECTED, body_lines, render_hop
+from sxagent.handoff import BODY, INJECTED, Outcome, body_lines, render_hop
+
+if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
+    from langchain_core.messages import BaseMessage
 
 #: 消息类型 → 人话（读的人是主 agent，所以 `AIMessage` 是"你"）。
 #: 不把框架的 Python 类名漏给模型，交接书里一律说"用户说的"、"它说的"。
@@ -30,7 +33,7 @@ _WHO: dict[str, str] = {
 }
 
 
-def _who(m: Any) -> str:  # noqa: ANN401
+def _who(m: BaseMessage) -> str:
     """这条消息是谁说的 —— 打过注入标记的（平台透传）不叫"你说的"。
 
     `injected_by` 是结构（挂在 `additional_kwargs` 上），这里读它，不是"看内容像不像平台的
@@ -41,7 +44,7 @@ def _who(m: Any) -> str:  # noqa: ANN401
     return f"**{_WHO.get(type(m).__name__, type(m).__name__)}**"
 
 
-def _item(m: Any) -> str:  # noqa: ANN401
+def _item(m: BaseMessage) -> str:
     """一条消息 → 一个列表项（多行的整块缩在下一层）。
 
     一张单子要么整块在下一层，要么别塞进来 —— 单行拼法会把工具返回 / 平台注入那张单子的
@@ -55,7 +58,9 @@ def _item(m: Any) -> str:  # noqa: ANN401
     return "\n".join([f"- {_who(m)}：", *body_lines(body, BODY)])
 
 
-def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> str:
+def build_prompt(
+    skill_name: str, task: str, outcome: Outcome, messages: list[BaseMessage]
+) -> str:
     """试答那一步喂给主 agent 的全部输入 —— 抽成纯函数是为了可单测。
 
     走唯一那条渲染路（`render_hop`）：段名 0 列 · 来源 2 列 · 段体 2 列。

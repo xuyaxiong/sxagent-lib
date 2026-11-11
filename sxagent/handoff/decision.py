@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
 
 from sxagent import trace
 from sxagent.handoff import bullet_lines, render_hop
@@ -40,8 +40,8 @@ def emit_decision(
     who: str,
     *,
     q: str = "",
-    given: Any = (),
-    result: Any = (),
+    given: Sequence[str] | str = (),
+    result: Sequence[str] | str = (),
     nxt: str = "",
     result_by: str = "llm",
 ) -> None:
@@ -67,7 +67,7 @@ def emit_decision(
                 "result_by": result_by, "ts": trace.stamp()})
 
 
-def render_decision(ev: dict) -> str:
+def render_decision(ev: dict[str, object]) -> str:
     """决策事件 → 渲染出来的文本。记录层和终端共用这一处。
 
     列表 → `- ` 列表项（续行对齐，`bullet_lines`）；字符串 → 一段；空的不渲染。
@@ -81,7 +81,7 @@ def render_decision(ev: dict) -> str:
     keys = {**_DECISION_KEYS, "result": result_key}
     sections: dict[str, str] = {}
     for field, key in keys.items():
-        val: Any = ev.get(field)
+        val: object = ev.get(field)
         items = [str(x) for x in val] if isinstance(val, (list, tuple)) else [str(val or "")]
         items = [x for x in items if x.strip()]
         if not items:

@@ -15,10 +15,14 @@ API。状态挂模块级的话，用户 B 会看到用户 A 的全部产物。
 from __future__ import annotations
 
 import itertools
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Iterator, TextIO
+
+#: 事件订阅者的类型：收一个事件、不返回。
+Sink = Callable[[dict[str, object]], None]
 
 
 class Session:
@@ -39,13 +43,13 @@ class Session:
         # ── 事件总线（`trace.py` 用）──
         #: 这个会话的订阅者（展示层）—— A 会话的展示层收不到 B 会话的事件。
         #: 每个元素是 `[fn, handle]`：退订要能定位到"哪一个"（见 `trace._Subscription`）。
-        self.subs: list[list] = []
+        self.subs: list[list[Sink]] = []
         # ── 日志（`recorder.py` 用）──
         #: 这个会话的日志文件 —— 惰性建（没写过日志的会话不产生文件）。
         #: 建文件 / 起名字是 `recorder` 的事（它才知道 `LOG_DIR` 和那个后缀），这里只存。
         self.log_file: Path | None = None
         #: 打开着的句柄 —— 跟着 `log_file` 一起由 `recorder` 建。
-        self.log_fh: Any = None
+        self.log_fh: TextIO | None = None
 
 
 #: 默认会话 —— 只有上下文里没设时才取得到。

@@ -49,7 +49,7 @@ MAX_REF_BYTES = 256 * 1024
 PACK_DIRS: dict[str, Path] = {}
 
 
-def split_frontmatter(text: str) -> tuple[dict, str]:
+def split_frontmatter(text: str) -> tuple[dict[str, object], str]:
     """拆 `---` 包裹的 frontmatter 与正文；没有就元数据为空。
 
     结束标记必须是独占一行的 `---`，不能 `text.split("---")`：值里可以带 `---`（真实

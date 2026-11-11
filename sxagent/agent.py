@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -34,8 +34,10 @@ from sxagent.config import get_model
 from sxagent import executor  # 走模块属性，见 delegate 的注释
 from sxagent.handoff.ask import build_prompt as ask_prompt  # 试答
 from sxagent.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
+from sxagent.handoff import Outcome  # 执行器结果的契约（实现在 executor，由测试盯着）
 from sxagent.handoff.briefing import (  # 委托单
     Task,
+    Turn,
     absorb_outcome,
     moot_older_waiting,
     render_briefing,
@@ -59,6 +61,7 @@ from sxagent.artifacts import (
 )
 from sxagent.skill_pack import read_skill, read_skill_file  # 技能包：两个读工具（磁盘）
 from sxagent.registry import registry  # 技能注册表（唯一持有者）
+from sxagent.skills import Skill  # 技能领域
 
 #: 主 agent 的 system prompt。它是平台约定，不约束 skill 作者。
 _MAIN_PROMPT = (
@@ -155,7 +158,9 @@ class _AgentAnswer(BaseModel):
     answer: str = Field(default="", description="can_answer=true 时给出补充内容，原话照搬不要改写")
 
 
-async def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
+async def _ask_main(
+    messages: list[BaseMessage], skill_name: str, task: str, outcome: Outcome
+) -> str:
     """平台强制的一步：让主 agent 用它自己的上下文，试着补上执行器缺的那条信息。
 
     "它要什么"必须给全——那是执行器自己申报的原话，不用从它说的话里挑。
@@ -209,8 +214,8 @@ async def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) ->
 
 
 async def try_answer_then_rerun(
-    rec: Task, skill: Any, outcome: Any, *, messages: list
-) -> tuple[Any, str]:
+    rec: Task, skill: Skill, outcome: Outcome, *, messages: list[BaseMessage]
+) -> tuple[Outcome, str]:
     """执行器说「缺信息」→ 主 agent 先试答 → 答得上就带回去重跑一遍。
 
     首次派发和投递重跑共用这一套。返回 `(最终 outcome, 试答)`；试答为空表示答不上，由
@@ -228,8 +233,8 @@ async def try_answer_then_rerun(
     return o2, answer
 
 
-async def dispatch(skill: Any, rec: Task, tasks: list[Task], *, trigger: str,
-                   messages: list) -> tuple[Any, str, list[Task]]:
+async def dispatch(skill: Skill, rec: Task, tasks: list[Task], *, trigger: str,
+                   messages: list[BaseMessage]) -> tuple[Outcome, str, list[Task]]:
     """派发编排，`delegate` 与 `graph._feed_waiting` 共用的那一段。
 
     顺序不能调：跑执行器 → 落账 → 记 `run_by`（台账据此说清"全文在哪"）→ 要信息就
@@ -250,14 +255,14 @@ async def dispatch(skill: Any, rec: Task, tasks: list[Task], *, trigger: str,
 
 
 def _cmd(
-    runtime: ToolRuntime, recs: list[dict] | None, msg: str, *, handoff: dict | None = None
+    runtime: ToolRuntime, recs: list[Task] | None, msg: str, *, handoff: dict[str, object] | None = None
 ) -> Command:
     """返回这几条 Task，合并交给 state 的 reducer。
 
     `handoff` 是回执对象，挂在 `additional_kwargs` 上搭同一趟车：模型只看 `content`，
     记录和审计层读对象。
     """
-    update: dict[str, Any] = {
+    update: dict[str, object] = {
         "messages": [
             ToolMessage(
                 content=msg,
@@ -277,14 +282,14 @@ def _reject(runtime: ToolRuntime, kind: str, detail: str, available: str) -> Com
     return _cmd(runtime, None, render_receipt(r), handoff=r)
 
 
-def _supersede_old(runtime: ToolRuntime, skill_name: str) -> list[dict]:
+def _supersede_old(runtime: ToolRuntime, skill_name: str) -> list[Task]:
     """把同 skill 下已经死掉的旧 Task 标成 `superseded`。
 
     只取代 `failed` 的。`waiting_for_input` 一律不碰：重派不是解除待答的路径，碰它只会
     静默抹掉一个用户从没回答过的问题。`completed` 的是历史，不能抹。
     返回完整 Task 字典（不是 patch），reducer 按 id 整体覆盖。
     """
-    out: list[dict] = []
+    out: list[Task] = []
     for t in runtime.state.get("tasks") or []:
         if t.get("skill") == skill_name and t.get("stage") == "failed":
             out.append({**t, "stage": "superseded"})
@@ -294,14 +299,14 @@ def _supersede_old(runtime: ToolRuntime, skill_name: str) -> list[dict]:
 # ──────────────────────────── 用户原话（平台硬搬） ────────────────────────────
 
 
-def _user_turns(messages: list) -> list[dict]:
+def _user_turns(messages: list[BaseMessage]) -> list[dict[str, object]]:
     """把对话历史里的用户原话抽出来，按顺序编号，平台硬搬不经转述。
 
     只认 `HumanMessage`：主图里注入的台账是 `SystemMessage`、透传是 `AIMessage`，所以
     "HumanMessage 就是用户本人说的"在主图里成立（执行器自己的图里不成立，别复用）。
     存全文，交接书里只渲染开头几个字，全文按需 `read_user_turn(n)` 取。
     """
-    out: list[dict] = []
+    out: list[dict[str, object]] = []
     last_ai = ""
     for m in messages:
         if isinstance(m, AIMessage):
@@ -324,7 +329,7 @@ def _user_turns(messages: list) -> list[dict]:
 
 
 def _new_task(skill_name: str, task: str, tid: str, refs: list[str],
-              turns: list[dict]) -> Task:
+              turns: list[Turn]) -> Task:
     """建委托单 —— 这次委派的全部已知（schema 见 `handoff.briefing.Task`）。
 
     `total=False` 是如实：注入的 Task 可能只有部分字段。
@@ -351,7 +356,7 @@ def _new_task(skill_name: str, task: str, tid: str, refs: list[str],
     }
 
 
-def _out(runtime: ToolRuntime, rec: Task, superseded: list[Task], outcome: Any, *,
+def _out(runtime: ToolRuntime, rec: Task, superseded: list[Task], outcome: Outcome, *,
          agent_answer: str = "", note: str = "", mooted: list[Task] | None = None) -> Command:
     """统一的返回口，总是带上被取代的旧 Task。
 
@@ -368,7 +373,7 @@ def _out(runtime: ToolRuntime, rec: Task, superseded: list[Task], outcome: Any, 
 
 
 def _reply(runtime: ToolRuntime, rec: Task, superseded: list[Task], tid: str,
-           skill: Any, outcome: Any, *, answer: str = "",
+           skill: Skill, outcome: Outcome, *, answer: str = "",
            mooted: list[Task] | None = None) -> Command:
     """把这一趟的结果说回主 agent：按三态枚举分派，穷举，没有第四种。"""
     # ① 完成了 —— 平台不下"完成了"的结论：三态是结构算的，"够不够"由主 agent 看回执判。
@@ -511,7 +516,8 @@ class _StopWhenPending(AgentMiddleware):
     """
 
     @hook_config(can_jump_to=["end"])
-    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+    # 这两个参数跟着 langchain 的中间件签名，标不出更细的（状态类型住在 `graph.py`，import 会成环）
+    def before_model(self, state: Any, runtime: Any) -> dict[str, object] | None:
         """这一轮平台要贴一条新问题出去 → 结束这一轮，模型不会被调用。
 
         两种形状都要认，少认一种就是"拦一半"：
@@ -537,7 +543,7 @@ class _StopWhenPending(AgentMiddleware):
         return None
 
     @staticmethod
-    def _stop(why: str) -> dict[str, Any]:
+    def _stop(why: str) -> dict[str, object]:
         """单独报一行：读日志的人得看得出"主 agent 这一轮被平台收了话" ——
         不然只会以为它没说话。`why` 写清是哪条路拦下的，复盘要看。
         """

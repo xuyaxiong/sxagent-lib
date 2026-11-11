@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 from sxagent import config as sxagent_config
 from sxagent.registry import registry
@@ -36,7 +36,7 @@ class UsageCounter(BaseCallbackHandler):
         self.calls = 0
         self.in_tokens = 0
         self.out_tokens = 0
-        self.per_call: list[dict] = []
+        self.per_call: list[dict[str, object]] = []
 
     def on_llm_end(self, response, **kwargs) -> None:  # noqa: ANN001
         self.calls += 1
@@ -52,7 +52,7 @@ class UsageCounter(BaseCallbackHandler):
             {"in": (u or {}).get("input_tokens", 0), "out": (u or {}).get("output_tokens", 0)}
         )
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, object]:
         return {
             "llm_calls": self.calls,
             "in_tokens": self.in_tokens,
@@ -105,7 +105,7 @@ def ensure_app_dirs() -> list[str]:
 # ──────────────────────────── 技能加载 ────────────────────────────
 
 
-def _load_skills_dir(path_str: str) -> dict:
+def _load_skills_dir(path_str: str) -> dict[str, object]:
     """从目录装技能包（相对路径按仓库根解析，子进程 cwd 变了也不受影响）。
 
     格式解析在 `sxagent.skill_pack`，这里只把路径定到仓库根。
@@ -126,7 +126,7 @@ def _load_skills_dir(path_str: str) -> dict:
 # ──────────────────────────── 装配 ────────────────────────────
 
 
-def _install_skills(case: dict) -> None:
+def _install_skills(case: dict[str, object]) -> None:
     """技能集：从 `case.skills_dir` 读目录或从 `case.skills` 内联，换进注册表。
 
     先 `reset()` 再叠加，`extra` 为空时也要 reset，同进程多 case 才不会串味。
@@ -137,7 +137,7 @@ def _install_skills(case: dict) -> None:
     registry.testing.reset()
     # 技能包目录表也要清：它不归注册表管，不清会残留上一个 case 的包目录
     sxagent.skill_pack.clear()
-    extra: dict = {}
+    extra: dict[str, object] = {}
     if case.get("skills_dir"):
         extra.update(_load_skills_dir(str(case["skills_dir"])))
     if case.get("skills"):
@@ -149,14 +149,14 @@ def _install_skills(case: dict) -> None:
             registry.testing.extend(extra)
 
 
-def _record_artifacts() -> list[dict]:
+def _record_artifacts() -> list[dict[str, object]]:
     """产物写入流水：记谁在什么时候写了什么，用来判并发与归属。
 
     签名要跟着 `sxagent.artifacts.store_artifact` 走，漏改就是整轮 `TypeError`。
     """
     import sxagent.artifacts
 
-    writes: list[dict] = []
+    writes: list[dict[str, object]] = []
     orig_store = sxagent.artifacts.store_artifact
 
     def rec_store(title: str, summary: str, file_type: str, content: str) -> str:
@@ -179,7 +179,7 @@ def _record_artifacts() -> list[dict]:
     return writes
 
 
-def _record_run_tasks() -> list[dict]:
+def _record_run_tasks() -> list[dict[str, object]]:
     """执行器调用流水：记哪个线程在跑哪个 skill，用来判产物归属。
 
     两条路都汇到 `agent.dispatch`，那里走模块属性 `executor.run_task`（晚绑定）。
@@ -187,7 +187,7 @@ def _record_run_tasks() -> list[dict]:
     import sxagent.artifacts
     import sxagent.executor
 
-    run_tasks: list[dict] = []
+    run_tasks: list[dict[str, object]] = []
     orig_run_task = sxagent.executor.run_task
 
     async def rec_run_task(skill, briefing: str = "", user_turns=None):
@@ -230,7 +230,7 @@ def _count_tokens() -> UsageCounter:
     return counter
 
 
-def install(case: dict) -> dict:
+def install(case: dict[str, object]) -> dict[str, object]:
     """装好全部观测与注入，必须在 `build()` 之前调用。"""
     import sxagent.agent
     import sxagent.artifacts
@@ -281,7 +281,7 @@ def ctx_warn(total: int) -> str:
     )
 
 
-def _ctx_chars(messages: list) -> int:
+def _ctx_chars(messages: list[BaseMessage]) -> int:
     """主 agent 上下文体积，与 `sxagent/__main__._ctx_chars` 同一口径，两边可比。"""
     total = 0
     for m in messages:
@@ -291,7 +291,7 @@ def _ctx_chars(messages: list) -> int:
     return total
 
 
-def _last_ai_text(state: dict) -> str:
+def _last_ai_text(state: dict[str, object]) -> str:
     for m in reversed(state.get("messages") or []):
         if isinstance(m, AIMessage) and str(m.content).strip():
             return str(m.content)
@@ -309,7 +309,7 @@ def _sys_prompt_chars() -> int:
     return len(sxagent.agent._MAIN_PROMPT) + len("\n\n可用技能：\n" + registry.catalog())
 
 
-def _msg_record(m) -> dict:
+def _msg_record(m) -> dict[str, object]:
     """一条 LangChain 消息 → 记录里那份（原文，不截断）。交接对象读
     `additional_kwargs`，不从 `content` 反推。"""
     kwargs = getattr(m, "additional_kwargs", None) or {}
@@ -329,7 +329,7 @@ def _msg_record(m) -> dict:
     }
 
 
-def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> dict:
+def snapshot(state: dict[str, object], user: str, prev_len: int, idx: int, wall_s: float) -> dict[str, object]:
     from sxagent import trace
     from sxagent import artifacts
 
@@ -377,7 +377,7 @@ def _slug(s: str, n: int = 40) -> str:
     return artifact_slug(s, n)
 
 
-def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
+def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict[str, object]) -> Path:
     """把产物原文落盘，主 agent 上下文里没有的东西，人能看到。
 
     只有把原文摊开给人看，"这份完不完整"才有答案。落 `runs/<tag>/artifacts/<case>__r<rep>/`，
@@ -464,7 +464,7 @@ def _injected_label(tag: str | None) -> str:
     return "📮 " + INJECTED.get(tag, f"（未知的注入标记：{tag}）")
 
 
-def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
+def _receipt_sections(handoff: dict[str, object]) -> list[tuple[str, str]]:
     """回执对象 → 哪一段、写了什么。读对象，不读文本。
 
     "这条回执是不是派发被拒"由 `handoff.receipt` 判（拒绝口那张表在它那儿）：这里不按前缀
@@ -479,7 +479,7 @@ def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
     return [(RECEIPT_LABEL.get(k, k), sections[k]) for k in keys if sections.get(k)]
 
 
-def _turn_summary(turns: list[dict], i: int) -> list[str]:
+def _turn_summary(turns: list[dict[str, object]], i: int) -> list[str]:
     """每轮开头的小结：有没有反问、用户输入是谁给的、平台做了什么。"""
     t = turns[i]
     prev = turns[i - 1] if i > 0 else None
@@ -529,11 +529,11 @@ class _ToolPairing:
         #: tool_call_id → 工具名（用来判返回的来源）
         self._names: dict[str, str] = {}
         #: tool_call_id → 调用参数（"读了哪份"要靠它）
-        self._args: dict[str, dict] = {}
+        self._args: dict[str, dict[str, object]] = {}
         #: 还没配上返回的调用（老数据没有 id 时按顺序配）
-        self._pending: list[tuple[str, dict]] = []
+        self._pending: list[tuple[str, dict[str, object]]] = []
 
-    def remember(self, call: dict) -> None:
+    def remember(self, call: dict[str, object]) -> None:
         """记一次调用 —— `id` 有就按 id 记，同时进顺序队列兜底。"""
         args = call.get("args") or {}
         if call.get("id"):
@@ -541,7 +541,7 @@ class _ToolPairing:
             self._args[str(call["id"])] = args
         self._pending.append((str(call.get("name")), args))
 
-    def take(self, tid: object) -> tuple[str, dict]:
+    def take(self, tid: object) -> tuple[str, dict[str, object]]:
         """取这条返回对应的调用 —— 优先按 `tool_call_id` 精确配对，退化为按顺序。"""
         key = str(tid) if tid else ""
         if key and key in self._names:
@@ -555,7 +555,7 @@ class _ToolPairing:
         return self._pending.pop(0) if self._pending else ("?", {})
 
 
-def _render_ai(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
+def _render_ai(m: dict[str, object], pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
     """主 agent 的一段话和它调的工具，每条各占一个编号。"""
     out: list[str] = []
     content = str(m.get("content") or "")
@@ -588,7 +588,7 @@ def _render_ai(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
     return out, n
 
 
-def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
+def _render_tool(m: dict[str, object], pairing: _ToolPairing, n: int) -> tuple[list[str], int]:
     """四种形状各有处置：`read_*`（正文另有出处，只写读了啥）、`delegate`（回执对象在
     `additional_kwargs` 上）、没有对象的 `delegate`（机制破了，如实说）、其余（原样照录）。"""
     out: list[str] = []
@@ -648,7 +648,7 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
     return out, n
 
 
-def _render_system(m: dict, n: int) -> tuple[list[str], int]:
+def _render_system(m: dict[str, object], n: int) -> tuple[list[str], int]:
     """平台注入：每轮开头自动塞给主 agent 的那条任务台账。"""
     n += 1
     return [
@@ -662,7 +662,7 @@ def _render_system(m: dict, n: int) -> tuple[list[str], int]:
     ], n
 
 
-def _render_unknown(m: dict, n: int) -> tuple[list[str], int]:
+def _render_unknown(m: dict[str, object], n: int) -> tuple[list[str], int]:
     """未知消息类型的兜底。切了必须标，否则读的人分不清"它就这么多"和"被切了"。"""
     content = str(m.get("content") or "")
     n += 1
@@ -677,7 +677,7 @@ def _render_unknown(m: dict, n: int) -> tuple[list[str], int]:
     ], n
 
 
-def _render_messages(turn: dict) -> list[str]:
+def _render_messages(turn: dict[str, object]) -> list[str]:
     """把本轮消息渲染成带来源与类型的记录。
 
     每条都要能看出谁说的和什么性质。它只做分发，配对状态在 `_ToolPairing` 里。
@@ -701,7 +701,7 @@ def _render_messages(turn: dict) -> list[str]:
     return out
 
 
-def _turn_header(turns: list[dict], i: int, t: dict) -> list[str]:
+def _turn_header(turns: list[dict[str, object]], i: int, t: dict[str, object]) -> list[str]:
     """一轮的头：标题、那行"几件事"、用户输入、上下文读数（超线加告警）。"""
     lines = [
         f"## 第 {t['turn']} 轮",
@@ -723,7 +723,7 @@ def _turn_header(turns: list[dict], i: int, t: dict) -> list[str]:
     return lines
 
 
-def _task_table(tasks: list[dict]) -> list[str]:
+def _task_table(tasks: list[dict[str, object]]) -> list[str]:
     """Task 台账：一张表，加每个 Task 的原话（`<details>` 里给全文）。"""
     lines = [
         "### Task 台账",
@@ -753,7 +753,7 @@ def _task_table(tasks: list[dict]) -> list[str]:
     return lines
 
 
-def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None:
+def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict[str, object]) -> None:
     """落盘运行全记录（一个 run 一份），人工审计"过程对不对、交接了什么"。
 
     结构：概览 → 运行全记录（按轮）→ 软判断留档 → 原始 trace 附录，后两段由父进程追加。
@@ -796,7 +796,7 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
 # ──────────────────────────── 原始 trace 附录 ────────────────────────────
 
 
-def append_trace(result: dict, tag: str) -> None:
+def append_trace(result: dict[str, object], tag: str) -> None:
     """把该 run 的原始 trace 作为附录并进它自己的 `_run.md`，一份文件读完。
 
     它和 `dump_run_record` 是一件事，交互式入口也要用，所以住在这儿。

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from sxagent import trace
 from sxagent.handoff import TaskStage, render_hop
+from sxagent.handoff.briefing import Task
 
 #: `Task.stage` 的全部取值 —— 与 `OutcomeStatus` 前三个同名；唯一的映射是
 #: `incomplete → failed`。`superseded` 是"不用管了"，台账里不展开细节、只列一行。
@@ -68,7 +69,7 @@ def brief(text: str, limit: int, what: str = "长文本", *, run_by: str = "") -
     return f"{text[:limit]}……【平台截断：还有 {len(text) - limit} 字，{src}】……"
 
 
-def render_ledger(tasks: list[dict]) -> str:
+def render_ledger(tasks: list[Task]) -> str:
     """把 Task 列表渲染成给主 agent 的台账（`node_prepare` 注入的那条 `SystemMessage`）。
 
     调用方保证 `tasks` 非空（空的时候 `node_prepare` 直接不注入 —— 闲聊轮次里没有这段）。

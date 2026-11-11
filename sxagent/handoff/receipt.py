@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from sxagent import artifacts as artifacts_mod
 from sxagent.handoff import (
@@ -28,6 +28,7 @@ from sxagent.handoff import (
     DELIVERY_FAULT_REJECTED,
     DELIVERY_FAULT_TIMEOUT,
     DELIVERY_FAULT_UNCLASSIFIED,
+    Outcome,
     render_hop,
 )
 
@@ -163,7 +164,7 @@ def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
 # ──────────────────────────── 构造：结果 → 对象 ────────────────────────────
 
 
-def _kind_of(outcome: Any) -> str:
+def _kind_of(outcome: Outcome) -> str:
     """出口分类。故障先判：这一轮根本没跑成，与"执行器干不了"是两回事。"""
     if outcome.fault:
         return "fault"
@@ -174,7 +175,7 @@ def _kind_of(outcome: Any) -> str:
     return "failed"
 
 
-def _deliver_line(outcome: Any, kind: str) -> str:
+def _deliver_line(outcome: Outcome, kind: str) -> str:
     """① 交付行：一行说清成没成、交付了几样。"""
     if kind == "fault":
         # 三档故障三条交付行，各有各的处置：`rejected` 那档尤其不许说"重试过一次仍失败"
@@ -218,7 +219,7 @@ def _produced_block(aids: list[str]) -> str | None:
     return "\n".join(block)
 
 
-def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Receipt:
+def build_receipt(outcome: Outcome, *, agent_answer: str = "", note: str = "") -> Receipt:
     """执行器的结果 ＋ 处置提示 → 回执对象。各段有条件的写在这里，`HOPS` 声明的是上限。"""
     kind = _kind_of(outcome)
     sections: dict[str, str] = {"deliver": _deliver_line(outcome, kind)}

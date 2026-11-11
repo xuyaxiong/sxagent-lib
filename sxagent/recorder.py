@@ -113,7 +113,7 @@ _NOTE_HEAD = {"relay": "finalize: "}
 _DEC = "    "
 
 
-def record(ev: dict) -> None:
+def record(ev: dict[str, object]) -> None:
     """把事件渲染成日志文件的一行（或一块）—— 文件格式的唯一出处。
 
     日志是权威记录：老日志、`_run.md` 附录、人的翻阅习惯都不能断，所以格式固定。
