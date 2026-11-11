@@ -22,6 +22,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import BaseTool
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
@@ -472,11 +473,20 @@ async def delegate(
 EXEC_PATH = "auto"
 
 #: 三种模式各给哪些工具。改这里时想清楚：拿掉某个工具会不会顺手拿掉一条合法能力。
-_TOOLS: dict[str, list] = {
+_TOOLS: dict[str, list[BaseTool]] = {
     "auto": [delegate, write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
     "delegate": [delegate, list_artifacts],
     "inline": [write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
 }
+
+
+def tool_names() -> set[str]:
+    """主 agent 可能调到的全部工具名 —— 三种执行路径的并集。
+
+    审计层按它列表来源（`app.runtime.TOOL_SOURCE`）：加了工具忘了补表，记录里那条返回的
+    来源会静默回落成"平台"。测试拿这个函数断覆盖性。
+    """
+    return {tool.name for tools in _TOOLS.values() for tool in tools}
 
 #: 非默认模式下往系统提示里补一句 —— 工具集变了，得让它知道为什么。
 _MODE_NOTE: dict[str, str] = {

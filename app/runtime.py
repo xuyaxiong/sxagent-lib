@@ -417,11 +417,11 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 #:
 #: 判据不在本文件里，从 `sxagent.handoff`（段名与出口分类的唯一来源）推。
 #: 这里手抄一份对应关系，回执改格式就静默失效，所以覆盖性要有检查盯着。
-_RECEIPT_KINDS: dict[str, str] = {
+RECEIPT_KINDS: dict[str, str] = {
     "completed": "✅ **交付回执**（执行器已写入产物库 —— 平台只说这个事实）",
     "waiting": "❓ **执行器申报要信息**（`ask_user`：平台先试答，答不上转达给用户）",
     "failed": "⚠️ **既没交付、也没说要什么**（推满轮次，交给主 agent 判）",
-    # 加新出口时，这张表和 `_RECEIPT_LABEL` 要同时补，漏一个就是静默回落成裸 key。
+    # 加新出口时，这张表和 `RECEIPT_LABEL` 要同时补，漏一个就是静默回落成裸 key。
     "fault": "⚠️ **平台故障**（这一轮**没跑成** —— 不是执行器干不了）",
     "rejected_skill": "⛔ **被平台拒绝**：没有这个技能",
     "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
@@ -429,7 +429,7 @@ _RECEIPT_KINDS: dict[str, str] = {
 
 
 #: 工具返回的来源（读日志的人最需要知道的一条：这段字是谁写的）
-_TOOL_SOURCE: dict[str, str] = {
+TOOL_SOURCE: dict[str, str] = {
     "delegate": "平台（`delegate` 的回执：**平台的框架话 + 执行器的原话**拼在一起）",
     "read_skill": "平台（技能原文 —— 主 agent 主动读的，渐进式披露第二层）",
     "read_skill_file": "技能包（技能自带文件的全文 —— 渐进式披露第三层）",
@@ -440,7 +440,7 @@ _TOOL_SOURCE: dict[str, str] = {
 
 
 #: 段的标签（给读日志的人看）。段名本身不在这里，从 `sxagent.handoff.SECTION` 取。
-_RECEIPT_LABEL: dict[str, str] = {
+RECEIPT_LABEL: dict[str, str] = {
     "deliver": "平台的框架话 · 这条回执属于哪种出口",
     "asked": "**它申报要的那句原话**（`ask_user` 的参数，未经转述）",
     "produced": "平台给的产物清单（**不含正文**）",
@@ -476,7 +476,7 @@ def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
     sections = handoff.get("sections") or {}
     keys = (HOPS["receipt_rejected"] if is_rejection(str(handoff.get("kind") or ""))
             else HOPS["receipt"])
-    return [(_RECEIPT_LABEL.get(k, k), sections[k]) for k in keys if sections.get(k)]
+    return [(RECEIPT_LABEL.get(k, k), sections[k]) for k in keys if sections.get(k)]
 
 
 def _turn_summary(turns: list[dict], i: int) -> list[str]:
@@ -596,11 +596,11 @@ def _render_tool(m: dict, pairing: _ToolPairing, n: int) -> tuple[list[str], int
     n += 1
     tool, target = pairing.take(m.get("tool_call_id"))
     handoff = m.get("handoff")
-    mark = _RECEIPT_KINDS.get((handoff or {}).get("kind", ""), "")
+    mark = RECEIPT_KINDS.get((handoff or {}).get("kind", ""), "")
     out += [
         f"**{n}. ↩️ 返回给主 agent**（工具 `{tool}`）{mark}",
         "",
-        f"<sub>来源：{_TOOL_SOURCE.get(tool, '平台')}</sub>",
+        f"<sub>来源：{TOOL_SOURCE.get(tool, '平台')}</sub>",
         "",
     ]
     if tool in ("read_artifact", "read_skill", "read_skill_file"):
