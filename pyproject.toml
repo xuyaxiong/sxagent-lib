@@ -2,6 +2,7 @@
 name = "sxagent-lib"
 version = "0.1.0"
 description = "多 Skill Agent 库：Skill（专业能力）/ Task（业务工作）/ Sub Agent（可选执行者）三者正交——平台管机制，skill 管业务"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "langchain>=1.4.7",
@@ -9,6 +10,19 @@ dependencies = [
     "langgraph>=1.2.18",
     "python-dotenv>=1.2.4",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# 进包的只有库本体：app/ 是验证 CLI，skills/ 是示例，tests/ / scripts/ 不随包走。
+[tool.hatch.build.targets.wheel]
+packages = ["sxagent"]
+
+[tool.hatch.build.targets.sdist]
+# 只收库本体 ＋ 构建要用的元数据；`only-include` 是限定，`include` 是追加。
+only-include = ["sxagent"]
+include = ["README.md", "pyproject.toml"]
 
 [dependency-groups]
 dev = [
