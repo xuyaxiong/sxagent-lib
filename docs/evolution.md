@@ -42,9 +42,13 @@
   里一次都没出现过；哪天出现了再拿现场数据选型。
 - 试答的上下文里看不到工具调用的参数（`AIMessage.tool_calls` 的 `args`）：主 agent 写的
   `delegate(task=…)` 全文、`read_artifact` 的 id 在那一步都看不见。还没被压到过。
-- `TaskStage` 缺三个状态：`pending` 等计划-执行分离，`waiting_for_dependency` 等异步委派
-  （`delegate` 是同步的，依赖天然在循环里解决），`cancelled` 需要新工具。
-- `_user_turns.after` 这个字段够不够用还没实测。
+- `TaskStage` 另有三个状态是**故意不建**的：`pending`（要计划-执行分离）、
+  `waiting_for_dependency`（要异步委派——`delegate` 是同步的，依赖天然在循环里解决）、
+  `cancelled`（要一个取消工具）。每个都绑着一个更大的设计，设计没做，状态就没有入口；
+  做了哪个再加哪个，那时它才有路径可验。
+- `_user_turns.after` 只带**紧邻的那一条 AI 消息**：问题不在紧邻位置时（AI 问 → 用户说别的 →
+  AI 答 → 用户回答最初那个问题），它指的就不是问题。**判定条件**：执行器读到原话后仍然问
+  "这句在回答哪句"，就算不够用——真出现再谈加宽，索引不该为假想的情况涨。
 
 ## 近期
 
