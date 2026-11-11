@@ -22,11 +22,15 @@
 from __future__ import annotations
 
 import operator
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, NotRequired, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.base import BaseStore
 
 if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
     from langgraph.graph.state import CompiledStateGraph
@@ -360,18 +364,28 @@ def _make_node_agent(main_agent):
     return node_agent
 
 
-def build() -> CompiledStateGraph:
-    """把父图拼起来 —— 四个节点、一条直线，`InMemorySaver` 做 checkpointer。"""
+def build(
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
+    store: BaseStore | None = None,
+    tools: Sequence[BaseTool] = (),
+) -> CompiledStateGraph:
+    """把父图拼起来 —— 四个节点、一条直线。
+
+    三个注入点都可省：不给 `checkpointer` 就用库自带的内存版（重启即丢，宿主有 Postgres 这类
+    就传进来）；`store` 是长期记忆，先留口子；`tools` 是**宿主的领域工具**，追加进主 agent 的
+    工具表（库那组机制工具始终在，重名当场报错）。
+    """
     g = StateGraph(State)
     # 顺序由边保证：先投递（里面同步跑执行器），后注入台账
     g.add_node("feed", node_feed)
     g.add_node("prepare", node_prepare)
     # 主 agent：完整的 agent（工具 + 循环）
-    g.add_node("agent", _make_node_agent(build_agent(AgentState)))
+    g.add_node("agent", _make_node_agent(build_agent(AgentState, tools)))
     g.add_node("finalize", node_finalize)
     g.add_edge(START, "feed")
     g.add_edge("feed", "prepare")
     g.add_edge("prepare", "agent")
     g.add_edge("agent", "finalize")
     g.add_edge("finalize", END)
-    return g.compile(checkpointer=InMemorySaver())
+    return g.compile(checkpointer=checkpointer or InMemorySaver(), store=store)

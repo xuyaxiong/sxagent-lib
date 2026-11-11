@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents import create_agent
@@ -606,11 +608,31 @@ class _StopWhenPending(AgentMiddleware):
         return {"jump_to": "end"}
 
 
-def build_agent(state_schema: type) -> CompiledStateGraph:
-    """主 agent：一个完整的 agent（工具 + 循环）。工具集由 `EXEC_PATH` 决定。"""
+def _check_tool_names(tools: Sequence[BaseTool]) -> None:
+    """工具名不许撞。
+
+    撞了模型叫哪个都说不清；而且提示词里写着"用 `write_artifact` 交付"这类话，两个同名的工具
+    会让那句话变成假话。宿主的领域工具和库的机制工具都不许重名。
+    """
+    dupes = sorted(name for name, n in Counter(t.name for t in tools).items() if n > 1)
+    if dupes:
+        raise ValueError(
+            f"工具名撞了：{'、'.join(dupes)} —— 库的机制工具和宿主的领域工具不许重名，"
+            "改宿主那个工具的名字（或者拿掉它，用库的同名工具）"
+        )
+
+
+def build_agent(state_schema: type, extra_tools: Sequence[BaseTool] = ()) -> CompiledStateGraph:
+    """主 agent：一个完整的 agent（工具 + 循环）。
+
+    工具集 = `EXEC_PATH` 定的那组机制工具（`delegate` / `write_artifact` / …）**加上**宿主的
+    领域工具；重名当场报错。机制工具不可摘：摘了机制就不完整，提示词里那些话也成了假话。
+    """
+    tools = [*_TOOLS[EXEC_PATH], *extra_tools]
+    _check_tool_names(tools)
     return create_agent(
         get_model(),
-        tools=list(_TOOLS[EXEC_PATH]),
+        tools=tools,
         system_prompt=_MAIN_PROMPT
         + _MODE_NOTE.get(EXEC_PATH, "")
         + "\n\n可用技能：\n"
