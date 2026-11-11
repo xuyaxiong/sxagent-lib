@@ -119,7 +119,18 @@ state。这是接宿主时的一条选型提醒，不是性能缺陷。
 
 模型这一处还带出一条：`config.py` 原来在 import 那一刻就 `load_dotenv()`，宿主只要 import 这个
 库，进程环境就被动过。现在挪进 `load_env()`，第一次真要用到配置时才读 —— 注入了模型的宿主全程
-不碰 `.env`。
+不碰 `.env`。日志目录同理，原来 import 就 `mkdir`：现在挪到第一次写日志那一刻（`recorder._fh`）。
+
+日志目录没有做成 `build(log_dir=…)`，走的是 `recorder.use_dir()`。理由是结构事实：日志文件按
+**会话**开（一个 `session()` 一个文件），而 `build()` 一次装配服务所有会话 —— 同进程两个图时，
+后 build 的那个会把目录改给所有人。`artifacts.use_dir()` 是同一个形状，两个目录一个规矩。
+
+公共面收在 `sxagent/__init__.py`：装配（`build` / `next_pending` / `asked_text`）、配料
+（`Skill` / `SkillSource` / `LocalSkills` / `DEFAULT_SOURCE` / `builtin_skills` /
+`ArtifactStore` / `MemoryArtifacts` / `DEFAULT_STORE`）、接线（`session` / `trace` / 那几个词汇
+类型）。`agent` / `executor` / `handoff` / `stream` / `recorder` / `llm` / `aio` / `config`
+不出：它们是内部结构，公共面变了才算破坏兼容。守卫盯着"`__init__` 里 import 的名字都进
+`__all__`、`__all__` 里没有死名字"。
 
 技能这一处顺带删掉了三个换表口子（`registry.testing`）和那个模块本身（`registry.py`）。口子
 存在的理由是"全进程一张当前表"，而注入之后"换一批技能"就是换一个来源实例——构造比改全局

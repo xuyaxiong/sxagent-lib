@@ -10,7 +10,9 @@
 3. 日志是原始记录：不截断、不收回已经流出去的字。
 4. 落盘格式不是跨层契约：`_STREAM_MARK` / `_DECISION_HEAD` / `_NOTE_HEAD` 是本模块私有的
    格式，展示层订阅事件、不读日志文件。
-5. 文件惰性创建：`LOG_FILE` 只说"文件会在哪儿"，真建出来是第一次写那一刻。"""
+5. 文件惰性创建：`LOG_FILE` 只说"文件会在哪儿"，真建出来是第一次写那一刻。
+6. import 不在磁盘上留东西：目录也是第一次写那一刻才建（同 `.env` 那条 —— 宿主 import
+   这个库不该有副作用）。"""
 
 from __future__ import annotations
 
@@ -24,14 +26,14 @@ from sxagent import session, trace
 from sxagent.config import app_root
 from sxagent.handoff.decision import render_decision  # 决策块的唯一那条渲染路
 
-#: 日志落应用根下的 `logs/`（`config.app_root`），不按 `__file__` 算——冻结后那是
-#: `_internal/`，用户不该碰。跑批和测试把 `SXAGENT_LOG_DIR` 指到临时目录，噪音就不进 `logs/`。
+#: 默认日志目录：应用根下的 `logs/`（`config.app_root`），不按 `__file__` 算——冻结后那是
+#: `_internal/`，用户不该碰。跑批和测试把 `SXAGENT_LOG_DIR` 指到临时目录，噪音就不进 `logs/`；
+#: 宿主换地方走 `use_dir()`。目录本身不在这里建（不变量 6）。
 _log_dir = os.getenv("SXAGENT_LOG_DIR", "").strip()
 LOG_DIR = Path(_log_dir) if _log_dir else app_root() / "logs"
 # 配成相对路径时也按应用根落，不按 cwd。
 if not LOG_DIR.is_absolute():
     LOG_DIR = app_root() / LOG_DIR
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 #: 跑批的多个子进程可能同秒启动，撞同一个文件名；用 `SXAGENT_LOG_TAG` 区分。
 _TAG = os.getenv("SXAGENT_LOG_TAG", "").strip()
@@ -53,6 +55,16 @@ def log_size() -> int:
     return p.stat().st_size if p.exists() else 0
 
 
+def use_dir(path: Path | None) -> None:
+    """告诉记录器"这个会话"的日志放哪。入口调这个，不要直接赋值那个字段。
+
+    走函数，写错模块会当场 `AttributeError`（同 `artifacts.use_dir`）。不调就用默认目录
+    （`SXAGENT_LOG_DIR`，没设就是应用根下的 `logs/`）。要在第一次写日志**之前**调：路径
+    一旦算出来就定在那个会话上了。
+    """
+    session.current().log_dir = path
+
+
 def log_file() -> Path:
     """当前会话的日志文件 —— 第一次写日志时才建（没写过日志的会话不产生文件）。
 
@@ -62,7 +74,8 @@ def log_file() -> Path:
     s = session.current()
     if s.log_file is None:
         safe = re.sub(r"[^A-Za-z0-9_-]", "_", s.thread_id)[:40] or "session"
-        s.log_file = LOG_DIR / f"sxagent-{time.strftime('%Y%m%d-%H%M%S')}-{safe}{_SUFFIX}.log"
+        d = s.log_dir or LOG_DIR
+        s.log_file = d / f"sxagent-{time.strftime('%Y%m%d-%H%M%S')}-{safe}{_SUFFIX}.log"
     return s.log_file
 
 
@@ -70,7 +83,10 @@ def _fh() -> TextIO:
     """当前会话打开着的日志句柄 —— 没开就开（跟着 `log_file()` 一起惰性建）。"""
     s = session.current()
     if s.log_fh is None:
-        s.log_fh = log_file().open("w", encoding="utf-8")
+        p = log_file()
+        # 目录到这一刻才建（不变量 6）：`use_dir` 指哪就在哪建，没写过日志就不留东西。
+        p.parent.mkdir(parents=True, exist_ok=True)
+        s.log_fh = p.open("w", encoding="utf-8")
     return s.log_fh
 
 

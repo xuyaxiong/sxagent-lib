@@ -45,6 +45,9 @@ class Session:
         #: 每个元素是 `[fn, handle]`：退订要能定位到"哪一个"（见 `trace._Subscription`）。
         self.subs: list[list[Sink]] = []
         # ── 日志（`recorder.py` 用）──
+        #: 日志放哪 —— `None` = 用默认目录（`SXAGENT_LOG_DIR`，没设就是应用根下的 `logs/`）。
+        #: 宿主走 `recorder.use_dir()` 设，多会话共享进程时各写各的。
+        self.log_dir: Path | None = None
         #: 这个会话的日志文件 —— 惰性建（没写过日志的会话不产生文件）。
         #: 建文件 / 起名字是 `recorder` 的事（它才知道 `LOG_DIR` 和那个后缀），这里只存。
         self.log_file: Path | None = None
