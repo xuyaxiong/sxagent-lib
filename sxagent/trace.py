@@ -189,7 +189,10 @@ def section(title: str, kind: str = "") -> None:
 
 
 def note(text: str, kind: str = "") -> None:
-    """一行记录（带时间戳）。只发内容，日志文件里的前缀（如 `finalize: `）归记录器。"""
+    """一条记录（带时间戳）。只发内容，日志文件里的前缀（如 `finalize: `）归记录器。
+
+    `text` 通常是一行；透传那条是例外 —— 它带的就是待答原文，本来就可能多行。
+    """
     _publish({"type": "note", "kind": _check_kind(kind, "note"), "text": text, "ts": stamp()})
 
 

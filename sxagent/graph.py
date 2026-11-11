@@ -253,11 +253,13 @@ async def node_finalize(state: State) -> dict:
 
     block = render_relay(waiting)
     # 只发内容：`finalize: ` 前缀属于日志文件格式，归记录器；"谁 → 谁"展示层已写着。
-    trace.note(f"透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）",
-               kind="relay")
+    # 带的就是透传出去的那段 —— 展示层按 `relay` 归角色、原样上屏，贴的必须是它。
+    trace.note(block, kind="relay")
+    # 机制那句随交接摘要走：正文已经由上面那条 note 落过，这里不再 `full=True` 重贴一遍
+    # （`trace.handoff` 的规矩：别处 dump 过这一跳就不再 dump）。
     trace.handoff("待答透传", "平台", "用户", block,
-                  structured=f"Task.asked × {len(waiting)} → AIMessage(injected_by=platform.finalize)",
-                  full=True)
+                  structured=f"Task.asked × {len(waiting)} → AIMessage(injected_by=platform.finalize)"
+                             "｜**无条件**透传（不判断主 agent 问没问）")
     return {
     # 打 injected_by 标记，挂 `additional_kwargs`：不打的话记录层会把这条标成主 agent
     # 说的，而不是去看"内容像不像执行器的话"。

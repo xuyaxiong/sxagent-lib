@@ -478,11 +478,10 @@ def _on_event(ev: dict) -> None:
         if k == "waiting":
             _emit("decide", "分支：主 agent 答不上 → " + str(ev["text"]), stamp=ev["ts"])
         elif k == "relay":
-            # 原样上屏：`finalize: ` 前缀是日志文件格式（归 `recorder._NOTE_HEAD`），
-            # 这里按位置切它，文案一改就会静默吃掉几个字。
+            # 原文照上屏：这条 note 带的就是平台透传给用户的那段（执行器的原话），归属由 kind
+            # 给 —— 不读文本，也不切前缀（`finalize: ` 是记录层的格式，见 `recorder._NOTE_HEAD`）。
             _emit("ask", "平台 → 用户：" + str(ev["text"])
-                  + "\n（把上面那条**执行器的原话原样**转达 —— 代码保证不丢；主 agent 若也复述了一遍，"
-                    "那是提示词层面的礼貌，不是平台重复）",
+                  + "\n（平台把执行器的话**原样**转达 —— 代码保证不丢）",
                   stamp=ev["ts"])
         elif k == "llm_io":
             # `llm_io` 的 note 必须看得见：它是"这次调用的 PROMPT 没逐字记"那条声明，
