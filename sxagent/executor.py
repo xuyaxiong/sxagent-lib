@@ -313,7 +313,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
     """
     outcome = run.outcome
     # 整趟的墙钟，两道：边界查（超了不再开新一轮）与轮内查（见下面的 `asyncio.timeout`）。
-    # 它是故障不是"执行器干不了" —— 它一直在干活，只是没干完（`timeout` 那档）。
+    # 它是故障不是"执行器干不了" —— 这一趟没干完（`timeout` 那档）。
     left = MAX_WALL_S - (time.time() - run.t0)
     if left <= 0:
         _record_fault(
@@ -520,8 +520,9 @@ FAULT_VERDICT: dict[str, tuple[str, str]] = {
         "改不动就向用户说明这一段被拦了",
     ),
     "timeout": (
-        "**时间用完了**（跑满 {wall}s 墙钟）：{detail} —— 它**一直在干活**，只是这一趟没干完，"
-        "不是它干不了",
+        # 不许写"它一直在干活"：一路被推着走、每次都没出口的那种不是（上面【前提】里的轮次
+        # 和产物账如实写着，读的人自己判）。
+        "**时间用完了**（跑满 {wall}s 墙钟）：{detail} —— 这一趟没干完，不是它干不了",
         "**交回主 agent** —— 原样再 `delegate` 一次可以；**老超时就说明活太大**，拆小一点再委派",
     ),
 }
