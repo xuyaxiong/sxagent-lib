@@ -736,13 +736,15 @@ def build_agent(
     skills: SkillSource = DEFAULT_SOURCE,
     model: BaseChatModel | None = None,
     extra_tools: Sequence[BaseTool] = (),
+    system_prompt: str | None = None,
 ) -> CompiledStateGraph:
     """主 agent：一个完整的 agent（工具 + 循环）。
 
     工具集 = `EXEC_PATH` 定的那组机制工具（`delegate` / `write_artifact` / …）**加上**宿主的
     领域工具；重名当场报错。机制工具不可摘：摘了机制就不完整，提示词里那些话也成了假话。
     `artifacts` 是宿主注入的产物库，`skills` 是技能来源（磁盘 / OSS / 数据库），`model` 是
-    模型实例 —— 三者不传就用库自带的。
+    模型实例 —— 三者不传就用库自带的。`system_prompt` 是宿主的业务提示词，追加在机制段
+    之后（机制段不可替换）；不传就一个字不加。
     """
     tools = [*_tools_for(EXEC_PATH, artifacts, skills, model), *extra_tools]
     _check_tool_names(tools)
@@ -752,7 +754,8 @@ def build_agent(
         system_prompt=_MAIN_PROMPT
         + _MODE_NOTE.get(EXEC_PATH, "")
         + "\n\n可用技能：\n"
-        + render_catalog(skills.values()),
+        + render_catalog(skills.values())
+        + (f"\n\n{system_prompt}" if system_prompt else ""),
         state_schema=state_schema,
         # 待答时不发言 —— 见 `_StopWhenPending`
         middleware=[_StopWhenPending()],

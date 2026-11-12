@@ -76,7 +76,8 @@
 
 注入点这一批做完了：模型（`BaseChatModel` 实例，主 agent / 执行器 / 试答三处共用）、产物库
 （`ArtifactStore`）、技能来源（`SkillSource`）、checkpointer 与长期记忆的口子、宿主的领域工具
-（`tools=`）、日志目录（`recorder.use_dir`）。公共面收在 `sxagent/__init__.py` 的 `__all__` 里，
+（`tools=`）、宿主的业务提示词（`system_prompt=`，追加在机制段之后，机制段不可替换）、
+日志目录（`recorder.use_dir`）。公共面收在 `sxagent/__init__.py` 的 `__all__` 里，
 有守卫盯着"导进来的名字都表过态"。
 
 配套的一条：import 这个包不在宿主那边留东西 —— 不读 `.env`，也不在磁盘上建目录。

@@ -399,13 +399,15 @@ def build(
     artifacts: ArtifactStore = DEFAULT_STORE,
     skills: SkillSource = DEFAULT_SOURCE,
     model: BaseChatModel | None = None,
+    system_prompt: str | None = None,
 ) -> CompiledStateGraph:
     """把父图拼起来 —— 四个节点、一条直线。
 
     注入点都可省：不给 `checkpointer` 就用库自带的内存版（重启即丢，宿主有 Postgres 这类
     就传进来）；`store` 是长期记忆，先留口子；`tools` 是**宿主的领域工具**，追加进主 agent 的
     工具表（库那组机制工具始终在，重名当场报错）；`artifacts` 是产物库（宿主可能落 OSS）；
-    `skills` 是技能来源（宿主可能从数据库 / OSS 给）；`model` 是模型实例（宿主自己造的那个）。
+    `skills` 是技能来源（宿主可能从数据库 / OSS 给）；`model` 是模型实例（宿主自己造的那个）；
+    `system_prompt` 是宿主的业务提示词，追加在机制段之后（机制段不可替换）。
     """
     g = StateGraph(State)
     # 顺序由边保证：先投递（里面同步跑执行器），后注入台账
@@ -416,7 +418,12 @@ def build(
         "agent",
         _make_node_agent(
             build_agent(
-                AgentState, artifacts=artifacts, skills=skills, model=model, extra_tools=tools
+                AgentState,
+                artifacts=artifacts,
+                skills=skills,
+                model=model,
+                extra_tools=tools,
+                system_prompt=system_prompt,
             )
         ),
     )

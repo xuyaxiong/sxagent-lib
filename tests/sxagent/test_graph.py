@@ -82,6 +82,26 @@ def test_the_injected_skill_source_reaches_the_agent(monkeypatch) -> None:
     assert seen["skills"] is source
 
 
+def test_the_business_prompt_is_appended_after_the_mechanism_block(monkeypatch) -> None:
+    """业务段只追加在末尾：机制段（含技能目录）逐字不动；不传就一个字不加。
+
+    宿主的 system_prompt 按会话传入，这是它的落点；机制段是库的，不许被替换。
+    """
+    prompts: list[str] = []
+
+    def fake_create_agent(model, **kw):
+        prompts.append(kw["system_prompt"])
+        return _FakeAgent()
+
+    monkeypatch.setattr("sxagent.agent.create_agent", fake_create_agent)
+
+    graph.build(model=object())
+    graph.build(model=object(), system_prompt="业务段：面向中学教师的备课助手")
+
+    assert prompts[1] == prompts[0] + "\n\n业务段：面向中学教师的备课助手"
+    assert not prompts[0].endswith("\n\n")  # 不传时连分隔符都不加
+
+
 async def test_the_feed_path_uses_the_injected_store_and_source(monkeypatch) -> None:
     """投递那条路也要走注入：查技能按注入的来源，产物落进注入的库，模型用注入的那个。
 
