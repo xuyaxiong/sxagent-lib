@@ -8,7 +8,8 @@
 
 - **装配**：`build`（整张图）、`next_pending` / `asked_text`（通道要摆到用户面前的那个待答）
 - **配料**（宿主注入 `build`）：`Skill`、`SkillSource` / `LocalSkills` / `DEFAULT_SOURCE` /
-  `builtin_skills`、`ArtifactStore` / `MemoryArtifacts` / `DEFAULT_STORE`
+  `builtin_skills`、`ArtifactStore` / `MemoryArtifacts` / `DEFAULT_STORE` / `file_ext`
+  （声明类型 → 扩展名：实现产物库时记 `ext` 用同一条规则）
 - **接线**：`session`（会话隔离）、`trace`（事件总线，展示层订阅它，不读日志文件）、
   `Task` / `TaskStage` / `Outcome` / `OutcomeStatus` / `FaultKind`（交接的词汇表）
 
@@ -18,7 +19,7 @@
 import 这个包不在宿主那边留任何东西：不读 `.env`，也不在磁盘上建目录。"""
 
 from sxagent import session, trace
-from sxagent.artifacts import DEFAULT_STORE, ArtifactStore, MemoryArtifacts
+from sxagent.artifacts import DEFAULT_STORE, ArtifactStore, MemoryArtifacts, file_ext
 from sxagent.graph import build, next_pending
 from sxagent.handoff import FaultKind, Outcome, OutcomeStatus, TaskStage
 from sxagent.handoff.briefing import Task, asked_text
@@ -41,6 +42,7 @@ __all__ = [
     "asked_text",
     "build",
     "builtin_skills",
+    "file_ext",
     "next_pending",
     "session",
     "trace",
