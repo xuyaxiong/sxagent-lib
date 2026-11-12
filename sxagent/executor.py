@@ -8,8 +8,8 @@
 1. 不绑技能。技能指令随任务传进来，加一个技能不用动平台。
 2. 用完即弃：不跨轮、不挂起、不与用户交互。状态在 `Task` 上，所以"重新起一个"是无害的。
 3. 出口三态由结构算（`_structural_status`）。平台只看三件自己看得见的事：调过 `ask_user`、
-   记过 `write_artifact`、两样都没有。不读正文、不判质量。推满 `MAX_REACT_ROUNDS` 仍没出口，
-   就交回主 agent。
+   记过 `write_artifact`、两样都没有。不读正文、不判质量。它自己停下来又什么都没交，平台
+   就推它接着干 —— **没有轮次上限**，跑多久由墙钟管；推了又推这个事实由账如实记。
 4. 判据的输入一样不能少（`_verdict` 的【前提】）：三件结构事实，"没有"也要显式写。
 5. 状态是结构不是文本：三态用枚举，要信息走 `ask_user`，故障记 `fault_kind`，不从 `fault`
    那段文字反解析。
@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import time
 from dataclasses import dataclass, field
@@ -72,11 +73,10 @@ _PLATFORM_RULE = (
     "  也不要顺手把答复里提到的**别的**需求做掉：那不是你的任务。\n"
 )
 
-#: 一个任务最多让它 react 几轮（平台自保，不约束 skill 作者）
-MAX_REACT_ROUNDS = 3
-
-#: 一整趟的墙钟上限（秒）。单次调用由 `MODEL_TIMEOUT_S` 兜，但那是一次调用的界，叠起来最坏
-#: 能拖到几十分钟。它在轮次边界查，拦不住一次阻塞调用，两条一起才拦得住。
+#: 一整趟的墙钟上限（秒）—— 这一趟唯一的时间边界。**没有轮次上限**：它自己停下来又什么都没
+#: 交，平台就推它接着干，推到墙钟为止（用户定的：两个边界会互相打架，慢热但正常的活会被轮次
+#: 误杀）。单次调用由 `MODEL_TIMEOUT_S` 兜，但那是一次调用的界，叠起来最坏能拖到几十分钟；
+#: 墙钟在轮次边界查、也在轮内拦（`asyncio.timeout`），两条一起才拦得住。
 MAX_WALL_S = 600
 
 #: 每次 `run_task` 一个递增编号，日志里用来分清哪一行属于哪一次。
@@ -299,6 +299,9 @@ def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str
     outcome.fault = fault
     outcome.fault_kind = kind
     outcome.rounds = rounds
+    # 这一趟写过的产物照记：故障不抹掉已经交出去的东西。账上"产物 0 个"而库里有，
+    # 视图就说了假话（实测：被墙钟切掉的那趟写了 5 份，账里一份都没有）。
+    outcome.artifacts = list(run.created)
     trace.note(note, kind="run_fault")
 
 
@@ -309,10 +312,10 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
     `None` 直接停。
     """
     outcome = run.outcome
-    # 整趟的墙钟在轮次边界查（拦不住单次阻塞调用，那个归 `MODEL_TIMEOUT_S`）：
-    # 超了就不再开新一轮，按故障交回主 agent。它是故障不是"执行器干不了" ——
-    # 它一直在干活，只是没干完（`timeout` 那档）。
-    if time.time() - run.t0 > MAX_WALL_S:
+    # 整趟的墙钟，两道：边界查（超了不再开新一轮）与轮内查（见下面的 `asyncio.timeout`）。
+    # 它是故障不是"执行器干不了" —— 它一直在干活，只是没干完（`timeout` 那档）。
+    left = MAX_WALL_S - (time.time() - run.t0)
+    if left <= 0:
         _record_fault(
             run,
             round_i,
@@ -326,10 +329,30 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
     # 几十秒不再黑屏。`who` 带技能名：多个执行器并行时流式行会交错，得能分辨是谁。
     resp = {}
     try:
-        async for chunk in stream.stream_agent(
-            agent, {"messages": run.messages}, None, f"执行器·{run.skill.name}", role=trace.EXECUTOR
-        ):
-            resp = chunk
+        # 轮内也拦：一轮跑的是内层 agent 的完整循环，循环多长这一轮就多长。没有这道闸，
+        # 墙钟只在轮次之间查就等于没有 —— 内层没有步数上限（实测：拆掉这道闸，60 秒能转
+        # 3400 次模型调用；真会话里表现为一趟 20 分钟、重复写 14 份产物，一次没触发）。
+        # 切在工具调用中间时已写下的产物不回滚 —— 副作用不回收是既定的立场。
+        async with asyncio.timeout(left):
+            async for chunk in stream.stream_agent(
+                agent,
+                {"messages": run.messages},
+                None,
+                f"执行器·{run.skill.name}",
+                role=trace.EXECUTOR,
+            ):
+                resp = chunk
+    except TimeoutError:
+        _record_fault(
+            run,
+            round_i + 1,
+            f"整趟超过墙钟上限（{MAX_WALL_S}s）",
+            "timeout",
+            f"⚠️ {_at(run.run_id, round_i + 1)}**时间用完了**（这一轮跑到 "
+            f"{time.time() - run.t0:.0f}s > 上限 {MAX_WALL_S}s，已就地叫停）"
+            f" → 交回主 agent（原样再委派可以；老超时就拆小）",
+        )
+        return None
     except Exception as e:  # noqa: BLE001
         # 走到这里 = 重试没救回来（重试只在第一步之前发生），或者抖动就落在第一步之后。这一轮记成
         # 平台故障（不是执行器干不了），决定权交回主 agent。不在这里重跑：一轮 60–120 秒。
@@ -368,8 +391,8 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
 def _decide_exit(run: _Run, resp: dict[str, object], round_i: int) -> str:
     """判出口：这一轮跑完了，按结构看下一步怎么走。
 
-    返回 `"stop"`（有出口：申报要信息 / 交了产物）或 `"again"`（推回去接着跑，或已到
-    轮次上限）。只看平台看得见的三件事，不读正文、不判质量。
+    返回 `"stop"`（有出口：申报要信息 / 交了产物）或 `"again"`（推回去接着跑）。
+    只看平台看得见的三件事，不读正文、不判质量。**没有轮次上限**：推几次由墙钟管。
     """
     outcome = run.outcome
     # ① 它申报了要信息（调了 `ask_user`）→ 这一轮到此结束，后面那半截话不进结论。
@@ -396,29 +419,23 @@ def _decide_exit(run: _Run, resp: dict[str, object], round_i: int) -> str:
         return "stop"
 
     # ③ 既没交、也没申报 → 推回去（照结构事实说，不编"还缺什么"）。没干完活是它的问题，
-    #    不该转嫁给用户。
-    if round_i + 1 < MAX_REACT_ROUNDS:
-        nudge = nudge_text()
-        trace.note(
-            f"⚠️ {_at(run.run_id, round_i + 1)}**既没交付、也没申报要信息**"
-            f" → 推它继续（提示词见下）",
-            kind="nudge",
-        )
-        trace.handoff(
-            "推回去",
-            "平台",
-            "执行器",
-            nudge,
-            structured="结构事实：本轮无产物 ＋ 没调 `ask_user`",
-            full=True,
-        )
-        run.messages = list(resp["messages"]) + [HumanMessage(nudge)]
-    else:
-        # 推满了，不再推 → 下面按结构定成 incomplete
-        trace.note(
-            f"⚠️ {_at(run.run_id, round_i + 1)}既没交付、也没申报，且已到轮次上限"
-            f" → 不再推，交给主 agent"
-        )
+    #    不该转嫁给用户。推到墙钟为止：慢热但正常的活不该被轮次数误杀，而"它推了又推、
+    #    始终没出口"这个事实由账（`outcome.rounds`）与回执如实说。
+    nudge = nudge_text()
+    trace.note(
+        f"⚠️ {_at(run.run_id, round_i + 1)}**既没交付、也没申报要信息**"
+        f" → 推它继续（提示词见下）",
+        kind="nudge",
+    )
+    trace.handoff(
+        "推回去",
+        "平台",
+        "执行器",
+        nudge,
+        structured="结构事实：本轮无产物 ＋ 没调 `ask_user`",
+        full=True,
+    )
+    run.messages = list(resp["messages"]) + [HumanMessage(nudge)]
     return "again"
 
 
@@ -463,12 +480,14 @@ async def run_task(
     它自己只做编排：准备 → `for 轮次: 跑一轮 → 判出口` → 收尾。
     """
     run, agent = _open_run(skill, briefing, user_turns, artifacts, skills, model)
-    for round_i in range(MAX_REACT_ROUNDS):
+    round_i = 0
+    while True:  # 出口只有两个：它交东西/申报要信息，或者墙钟把它切停（没有轮次上限）
         resp = await _run_round(run, agent, round_i)
         if resp is None:  # 没跑成（墙钟 / 异常 / 空流）—— 故障已经记进 outcome
             break
         if _decide_exit(run, resp, round_i) == "stop":
             break
+        round_i += 1
     return _close_run(run)
 
 
@@ -532,7 +551,10 @@ def _verdict_reason(outcome: ExecOutcome) -> tuple[str, str]:
         )
     else:
         why = "**既没申报、也没交产物**（顺序里没有命中的那一条）"
-        nxt = "**交回主 agent**（推满轮次仍没出口）—— 它看回执定：换个说法**重新委派** / 向用户说明"
+        nxt = (
+            f"**交回主 agent**（推了 {outcome.rounds} 轮仍没出口）——"
+            " 它看回执定：换个说法**重新委派** / 向用户说明"
+        )
     if outcome.fault:
         # 故障时 status 仍是三态里的值，但这一轮根本没跑成 —— 与"执行器干不了"是两回事。
         # 三档的说法在 `FAULT_VERDICT` 表里，跟 `handoff.receipt` 那几张同形（守卫盯着键集合）。
@@ -568,7 +590,7 @@ def _verdict(outcome: ExecOutcome, run_id: str) -> dict[str, object]:
                 if outcome.artifacts
                 else "**没有**（本轮没调它）"
             ),
-            f"**轮次**：内部第 {outcome.rounds} 轮（上限 {MAX_REACT_ROUNDS}）",
+            f"**轮次**：内部第 {outcome.rounds} 轮（**没有轮次上限**，由墙钟管）",
         ],
         "result": [f"status = **{outcome.status}**", f"依据：{why}"],
         "nxt": nxt,

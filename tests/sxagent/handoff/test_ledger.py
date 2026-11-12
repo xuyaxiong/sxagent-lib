@@ -14,7 +14,7 @@ from typing import cast
 import pytest
 
 from sxagent import trace
-from sxagent.handoff import BODY, ledger
+from sxagent.handoff import BODY, DELIVERED_DESPITE_FAULT, ledger
 from sxagent.handoff.briefing import Task
 from sxagent.handoff.ledger import render_ledger
 
@@ -68,6 +68,25 @@ def test_faulted_task_shows_the_fault_not_what_the_executor_said() -> None:
     )
     assert "SENTINEL-FAULT" in text
     assert "SENTINEL-REPORT" not in text
+
+
+def test_a_faulted_task_that_delivered_says_so() -> None:
+    """故障那条默认"什么都没交"——交过的要说清（有没有交 / 交得完不完整）。"""
+    said = DELIVERED_DESPITE_FAULT.format(2)
+    text = render_ledger(
+        [
+            _task(
+                stage="failed",
+                fault="SENTINEL-FAULT",
+                fault_kind="timeout",
+                artifacts=["art_001", "art_002"],
+            )
+        ]
+    )
+    assert said in text
+
+    plain = render_ledger([_task(stage="failed", fault="SENTINEL-FAULT", fault_kind="timeout")])
+    assert DELIVERED_DESPITE_FAULT.format(2) not in plain
 
 
 def test_waiting_task_reports_the_count_only() -> None:

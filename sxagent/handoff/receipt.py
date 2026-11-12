@@ -24,10 +24,12 @@ from typing import TypedDict
 
 from sxagent.artifacts import DEFAULT_STORE, ArtifactStore
 from sxagent.handoff import (
+    DELIVERED_DESPITE_FAULT,
     DELIVERY,
     DELIVERY_FAULT_REJECTED,
     DELIVERY_FAULT_TIMEOUT,
     DELIVERY_FAULT_UNCLASSIFIED,
+    NUDGED_WITHOUT_DELIVERY,
     Outcome,
     render_hop,
 )
@@ -56,7 +58,7 @@ _NEXT: dict[str, str] = {
         "更不要自己替用户定一个答案。"
     ),
     "failed": (
-        "它推满了轮次**既没交产物、也没说要什么信息**。两种可能，你看回执定：\n"
+        "它**推了几轮都没出口**：既没交产物、也没说要什么信息。两种可能，你看回执定：\n"
         "- 它**真的干不了** → 换个说法再 `delegate` 一次，或向用户说明这次没做成；\n"
         "- 它其实**把答案写在了回复里**（上面【执行器说】）→ 平台不认正文交付，"
         "但你可以**原样转达**给用户，或者让它**交付成产物**再来一次。"
@@ -96,26 +98,31 @@ _NEXT_FAULT_UNCLASSIFIED = (
     "再决定是原样再委派一次还是换措辞。"
 )
 
-#: 【平台故障】段的三类写法。`{detail}` 是原始原因。头一句按档不同：抖动和被拒是
-#: "根本没跑成"，超时是"根本没跑完"（它一直在干活），所以整段进表、不共用开头。
+#: 故障那趟**交过产物**时的【下一步】。处置和"什么都没交"那三档不一样：已交的部分别丢，
+#: 先看够不够；要补就**别原样重发**（原样重发会把已经交的整段重做一遍）——改小或换措辞。
+#: 不分档：原因上面那段已经说了，这里只说该怎么办。
+_NEXT_FAULT_DELIVERED = (
+    "**先看它交的够不够**：够 → 接着往下做（把产物 ID 当输入传下去，别让它重做）；"
+    "不够 → 补一次委派 —— **别原样重发**（已经交的会整段重做一遍），**改小或换措辞**。"
+)
+
+#: 【平台故障】段的三类写法：**只讲原因，不讲处置**（处置住【下一步】，一处定义）。
+#: `{detail}` 是原始原因。头一句按档不同：抖动和被拒是"根本没跑成"，超时是"根本没跑完"
+#: （它一直在干活），所以整段进表、不共用开头。
 _FAULT_SECTION: dict[str, str] = {
     "transient": (
         "这一轮**根本没跑成**：{detail}\n"
-        "平台侧的基础设施抖动 —— 不是任务本身的问题，"
-        "也不是执行器没干成。\n"
-        "**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）。"
+        "平台侧的基础设施抖动 —— 不是任务本身的问题，也不是执行器没干成。"
     ),
     "rejected": (
         "这一轮**根本没跑成**：{detail}\n"
         "**上游拒绝了这次请求**（4xx）—— 不是基础设施抖动，也不是执行器没干成；"
-        "**原样重发同一份内容会再被拒**。\n"
-        "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
+        "**原样重发同一份内容会再被拒**。"
     ),
     "timeout": (
         "这一轮**根本没跑完**：{detail}\n"
         "**时间用完了**（整趟跑超了平台的上限）—— 不是它干不了，也不是内容有问题；"
-        "它**一直在干活**，只是这一趟没干完。\n"
-        "**可以原样再 `delegate` 一次**；要是**老是**超时，说明活太大，拆小一点再委派。"
+        "这一趟没干完。"
     ),
 }
 
@@ -136,11 +143,11 @@ NOTE_BY_FAULT: dict[str, str] = {
 NOTE_FAULT_UNCLASSIFIED = "**平台侧没跑成**（原因未分类）"
 
 
-def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
+def next_note(kind: str, *, skill: str = "", fault_kind: str = "", delivered: int = 0) -> str:
     """出口 → 回执的【下一步】那段话（`kind` ∈ `Receipt.kind`）。
 
     不认识的 `kind` 当场 `KeyError`，不静默给一句错的处置。`skill` 只有 `completed`
-    那档用得上，`fault_kind` 只有 `fault` 那档用得上。
+    那档用得上，`fault_kind` / `delivered` 只有 `fault` 那档用得上。
     """
     if kind == "completed":
         # 判据要说清：平台不替它判，只把判据指出来 —— 技能指令里就写着交付格式，
@@ -157,6 +164,9 @@ def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
     if kind == "fault":
         # 三档故障三种处置。走表不走 if/elif：加第五档忘了补表要能被检查出来，
         # 而不是静默走兜底去说一句假话。
+        # 交过产物的那趟处置不一样（先看够不够、别原样重发）—— 三档那套默认"什么都没交"。
+        if delivered:
+            return DELIVERED_DESPITE_FAULT.format(delivered) + "\n" + _NEXT_FAULT_DELIVERED
         return _NEXT_BY_FAULT.get(fault_kind, _NEXT_FAULT_UNCLASSIFIED)
     return _NEXT[kind]
 
@@ -188,7 +198,11 @@ def _deliver_line(outcome: Outcome, kind: str) -> str:
         )
         template = _DELIVER_BY_FAULT.get(outcome.fault_kind, DELIVERY_FAULT_UNCLASSIFIED)
         # 三张模板都不带别的占位符（只有 timeout 那个 `{}`），所以统一 format 是安全的。
-        return template.format(mins)
+        line = template.format(mins)
+        # 交过产物就得说：故障话术默认"什么都没交"，账如实之后这个假设不成立。
+        if outcome.artifacts:
+            line += "。" + DELIVERED_DESPITE_FAULT.format(len(outcome.artifacts))
+        return line
     if kind == "completed":
         return DELIVERY["completed"].format(len(outcome.artifacts))
     if kind == "waiting":
@@ -270,7 +284,14 @@ def build_receipt(
         # 三档故障三段话，整段进表（头一句就不一样）。兜底不宣称任何事实 ——
         # 对 `rejected` / `timeout` 提"重试过"就是假话 —— 重试只发生在流的第一步之前。
         section = _FAULT_SECTION.get(outcome.fault_kind, _FAULT_SECTION_UNCLASSIFIED)
-        sections["fault"] = section.format(detail=outcome.fault)
+        text = section.format(detail=outcome.fault)
+        # 交过产物就得说清（有没有交 / 交得完不完整）—— 上面的故障话术默认"什么都没交"。
+        if outcome.artifacts:
+            text += "\n" + DELIVERED_DESPITE_FAULT.format(len(outcome.artifacts))
+        elif outcome.rounds > 1:
+            # 一个产物都没交、却推了好几轮：这不是"被时间切停"，是"推了又推都没出口"。
+            text += "\n" + NUDGED_WITHOUT_DELIVERY.format(outcome.rounds)
+        sections["fault"] = text
 
     return {"kind": kind, "sections": sections}
 

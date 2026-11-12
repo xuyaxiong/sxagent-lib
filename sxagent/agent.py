@@ -163,7 +163,7 @@ _ASK_STEP = "试答（LLM）· 平台强制的一步"
 
 
 class _AgentAnswer(BaseModel):
-    can_answer: bool = Field(description="你的上下文里有没有它缺的信息")
+    can_answer: bool = Field(description="你的上下文里有没有它缺的那一项（先核对：你要给的正是它问的）")
     answer: str = Field(default="", description="can_answer=true 时给出补充内容，原话照搬不要改写")
 
 
@@ -483,8 +483,12 @@ def _reply(
     #    主 agent 该做的事也不同（原样重派 vs 换说法重派）。
     if outcome.fault:
         # 三档故障三种说法：措辞按 `fault_kind` 从对象取；表住 `handoff.receipt`，不在这儿。
+        # 交过产物的那趟要一起说 —— 故障话术默认"什么都没交"，账如实之后这个假设不成立。
+        delivered = f"｜**交过 {len(outcome.artifacts)} 份产物**" if outcome.artifacts else ""
         trace.note(
-            f"delegate · {tid} " + NOTE_BY_FAULT.get(outcome.fault_kind, NOTE_FAULT_UNCLASSIFIED),
+            f"delegate · {tid} "
+            + NOTE_BY_FAULT.get(outcome.fault_kind, NOTE_FAULT_UNCLASSIFIED)
+            + delivered,
             kind="delegate_failed",
         )
         return _out(
@@ -492,7 +496,9 @@ def _reply(
             rec,
             superseded,
             outcome,
-            note=next_note("fault", fault_kind=outcome.fault_kind),
+            note=next_note(
+                "fault", fault_kind=outcome.fault_kind, delivered=len(outcome.artifacts)
+            ),
             artifacts=artifacts,
         )
     trace.note(

@@ -104,7 +104,7 @@ Skill 是静态的技能包，住在 `skills.py`，只有名字、说明、指�
 ```
 delegate 建 Task → running ─┬─ completed（交了产物）
                             ├─ waiting_for_input（调了 ask_user）
-                            └─ failed（推满 3 轮仍 incomplete）
+                            └─ failed（没有出口：既没交产物也没申报要信息）
    另有 superseded：同 skill 的 failed 旧 Task 被重新委派时自动标记
 ```
 
@@ -112,7 +112,8 @@ delegate 建 Task → running ─┬─ completed（交了产物）
 
 - `waiting_for_input` 不等于图失败，它是正常状态，说明执行器在等一个信息。
 - `completed` 不等于任务完成，它只说明"交了产物"这个事实。够不够，由主 agent 判。
-- `failed` 不等于模型报错，它的定义是"推满 3 轮，既没交产物也没申报要信息"。
+- `failed` 不等于模型报错，它的定义是"既没交产物也没申报要信息"（它自己停下来就推它接着
+  干，没有轮次上限，跑多久由墙钟管）。
 - 执行器"跑完了"不等于 Task 完成。所以平台对外只报结构事实，不替谁下结论。
 
 ## 交接（这套系统的行为几乎都由它决定）

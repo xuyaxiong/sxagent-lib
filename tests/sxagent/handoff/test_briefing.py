@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import cast, get_type_hints
 
 from sxagent.artifacts import store_artifact
-from sxagent.handoff.briefing import Task, render_briefing
+from sxagent.executor import ExecOutcome
+from sxagent.handoff.briefing import Task, absorb_outcome, render_briefing
 
 #: 刻意不渲染进交接书的字段 —— 每个都要写清为什么。
 #: 放在测试这边：产品代码里不需要一个只有测试读的常量。
@@ -108,3 +109,19 @@ def test_missing_artifact_ids_are_not_dropped() -> None:
     text = _render(_fixture(artifacts=["art_999"], refs=["art_998"]))
     assert "art_999" in text
     assert "art_998" in text
+
+
+def test_artifacts_accumulate_across_runs() -> None:
+    """一个任务可以交很多份产物（技能每阶段一份很常见，不区分中间与最终）——
+    这一趟交的不许把上一趟的顶掉；顶掉了，下一趟的交接书就"忘"了前面的。"""
+    store_artifact("哨兵一号", "梗概", "md", "正文")
+    store_artifact("哨兵二号", "梗概", "md", "正文")
+    rec: Task = {"id": "t1", "skill": "some-skill"}
+
+    absorb_outcome(rec, ExecOutcome(artifacts=["art_001"], report="第一趟"))
+    absorb_outcome(rec, ExecOutcome(artifacts=["art_002"], report="第二趟"))
+
+    assert rec["artifacts"] == ["art_001", "art_002"]
+    text = render_briefing(rec)
+    assert "art_001" in text
+    assert "art_002" in text

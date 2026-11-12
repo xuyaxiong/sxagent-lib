@@ -4,11 +4,19 @@
 不用模块级全局：两个 `delegate` 并行时会互相覆盖。
 
 顺带把"两个 run 确实重叠过"也断掉：不重叠的话，这条测试只是顺序跑了两遍，什么都没验到。
+最后一条是墙钟：内层 agent 循环转不完的一趟，必须在预算内被就地叫停。
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
+from typing import Any
+
+import pytest
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
 
 from sxagent import artifacts
 from sxagent.artifacts import MemoryArtifacts
@@ -60,6 +68,40 @@ def _skill(name: str, marker: str) -> Skill:
     return Skill(name=name, description=f"{marker} 的技能", instructions=f"任务标记：{marker}")
 
 
+class _RunawayModel(ToolCallingFakeModel):
+    """永远在写产物的假模型 —— 复刻实测里那个退化循环：每步都调 `write_artifact`，从不收尾。
+
+    每步睡 0.2 秒，让墙钟先于内层的步数上限触发 —— 验的才是这道闸。
+    """
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        await asyncio.sleep(0.2)
+        self.calls.append(("runaway", time.monotonic()))
+        return self._result(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "write_artifact",
+                        "args": {
+                            "title": "循环产物",
+                            "summary": "退化循环",
+                            "file_type": "md",
+                            "content": "正文",
+                        },
+                        "id": f"call-{len(self.calls)}",
+                    }
+                ],
+            )
+        )
+
+
 async def test_the_injected_model_reaches_the_executor(no_default_model) -> None:
     """注入的模型要真的用在执行器上 —— 默认模型那三处入口都换成了"一碰就抛"。"""
     fake = ToolCallingFakeModel()
@@ -106,3 +148,58 @@ async def test_the_two_runs_really_overlap(monkeypatch) -> None:
         spans[MARKER_A][-1], spans[MARKER_B][-1]
     )
     assert overlap
+
+
+class _NeverDeliversModel(ToolCallingFakeModel):
+    """只说话、不交产物、也不申报 —— 复刻"推了又推、始终没出口"的那类。
+
+    每步睡 0.05 秒：不睡的话 1 秒墙钟里能转几千轮，测试没意义还吵。
+    """
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        await asyncio.sleep(0.05)
+        self.calls.append(("chat", time.monotonic()))
+        return self._result(AIMessage("我先看看……"))
+
+
+async def test_a_run_that_never_delivers_is_nudged_until_the_wall_clock(monkeypatch) -> None:
+    """没有轮次上限：它自己不交东西，平台就一路推，最后由墙钟切停 —— 推了几轮要如实进账。"""
+    monkeypatch.setattr("sxagent.executor.MAX_WALL_S", 1.0)
+    fake = _NeverDeliversModel()
+
+    outcome = await run_task(_skill("skill-a", MARKER_A), "交接书", model=fake)
+
+    assert outcome.fault_kind == "timeout"
+    assert outcome.artifacts == []
+    assert outcome.rounds > 1, "推了不止一轮才被切 —— 没有轮次上限在提前判死"
+
+
+async def test_a_runaway_round_is_cut_by_the_wall_clock(monkeypatch) -> None:
+    """内层循环转不完的一趟，要在墙钟内被就地叫停 —— 实测里它跑过 20 分钟、写了 14 份产物。
+
+    断的是结构事实：故障档是 `timeout`、它真被拦住了（内层没转很多步、产物没攒一堆），
+    而且**被切掉的那趟写过的产物要进账**（账上"产物 0 个"而库里有，视图就说假话）。
+    内层没有任何步数上限（实测：无闸门时 60 秒能转 3400 次模型调用），所以测试自带一个
+    硬上限——闸门坏了就判红，不把 CI 挂死。
+    """
+    monkeypatch.setattr("sxagent.executor.MAX_WALL_S", 1.0)
+    fake = _RunawayModel()
+
+    try:
+        outcome = await asyncio.wait_for(
+            run_task(_skill("skill-a", MARKER_A), "交接书", model=fake), 20
+        )
+    except TimeoutError:
+        pytest.fail("墙钟没拦住：这一趟 20 秒都没结束")
+
+    assert outcome.fault_kind == "timeout"
+    # 交了产物 → 三态就是 `completed`（它只说"交没交"这个事实）；"被切停"由 `fault_kind` 另说
+    assert outcome.status == "completed"
+    assert len(fake.calls) < 10, "墙钟没拦住：内层转了很多步"
+    assert 0 < len(outcome.artifacts) < 10, "被切掉那趟的产物要进账，也不该攒一堆"

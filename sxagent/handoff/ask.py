@@ -89,9 +89,12 @@ def build_prompt(skill_name: str, task: str, outcome: Outcome, messages: list[Ba
             # （来源那一行回答的是"这句是谁说的"）。
             "ask_context": f"（全部 {len(msgs)} 条，全文，不截断）\n{history}",
             "ask_decide": (
-                "你的上下文里**有没有它需要的信息**？\n"
-                "- 有（用户之前说过）→ `can_answer=true`，`answer` 里给出补充内容，**原话照搬**\n"
-                "- 没有 → `can_answer=false`，**不要编造**"
+                "你的上下文里**有没有它需要的信息**？先核对：**你要拿出来的那句，是不是正好"
+                "回答它问的这一项** —— 手边有话可说不等于答上了。\n"
+                "- 有，而且正好是它要的那一项（用户之前说过）→ `can_answer=true`，"
+                "`answer` 里给出补充内容，**原话照搬**\n"
+                "- 没有，或你手上的不是它要的 → `can_answer=false`，**不要编造**，"
+                "也不要用别的东西顶上"
             ),
         },
     )

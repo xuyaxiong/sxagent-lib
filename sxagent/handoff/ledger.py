@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from sxagent import trace
-from sxagent.handoff import TaskStage, render_hop
+from sxagent.handoff import DELIVERED_DESPITE_FAULT, TaskStage, render_hop
 from sxagent.handoff.briefing import Task
 
 #: `Task.stage` 的全部取值 —— 与 `OutcomeStatus` 前三个同名；唯一的映射是
@@ -93,7 +93,11 @@ def render_ledger(tasks: list[Task]) -> str:
         by = str(t.get("run_by") or "")
         if faulted:
             # 故障时打故障原因、不打「执行器说」：它一个字都没说，照打就是冒号后面空白。
-            body.append(f"  - 平台故障：{brief(t['fault'], 150, '平台故障', run_by=by)}")
+            line = f"  - 平台故障：{brief(t['fault'], 150, '平台故障', run_by=by)}"
+            # 交过产物的那趟要说清 —— 故障话术默认"什么都没交"，账如实之后这个假设不成立。
+            if t.get("artifacts"):
+                line += f"；{DELIVERED_DESPITE_FAULT.format(len(t['artifacts']))}"
+            body.append(line)
         elif t.get("stage") == "waiting_for_input":
             # 不重印问题：全文由【待答】100% 覆盖，这里重印的那份是截断的 ——
             # 撤截断的那份、留全文那份，信息不丢；撤反了才丢（`feed` 那条路上没有回执）。

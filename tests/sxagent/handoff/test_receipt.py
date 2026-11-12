@@ -13,7 +13,7 @@ from typing import get_args
 from sxagent import executor
 from sxagent.artifacts import store_artifact
 from sxagent.executor import ExecOutcome
-from sxagent.handoff import FaultKind, ledger
+from sxagent.handoff import DELIVERED_DESPITE_FAULT, NUDGED_WITHOUT_DELIVERY, FaultKind, ledger
 from sxagent.handoff import receipt as receipt_mod
 
 #: 按 `FaultKind` 分档的全部表 —— 不变量 6 说"四处"，加 `ledger` 与 `executor` 两处共七张。
@@ -81,3 +81,51 @@ def test_no_fault_means_no_fault_section() -> None:
     )
     assert receipt["kind"] == "completed"
     assert "fault" not in receipt["sections"]
+
+
+def test_a_faulted_run_that_delivered_says_so() -> None:
+    """故障话术默认"什么都没交"——交过的必须说清（有没有交 / 交得完不完整）。"""
+    artifact_id = store_artifact("哨兵产物", "哨兵梗概", "md", "哨兵正文")
+    outcome = ExecOutcome(
+        status="completed",
+        artifacts=[artifact_id],
+        fault="整趟超过墙钟上限（600s）",
+        fault_kind="timeout",
+    )
+    sections = receipt_mod.build_receipt(
+        outcome, note=receipt_mod.next_note("fault", fault_kind="timeout", delivered=1)
+    )["sections"]
+    said = DELIVERED_DESPITE_FAULT.format(1)
+
+    assert said in sections["deliver"]
+    assert said in sections["next"]
+    assert said in sections["fault"]
+
+    # 没交的照旧不提这句：不许给"什么都没交"的那趟编一个"交过"
+    plain = ExecOutcome(status="incomplete", fault="哨兵抖动", fault_kind="transient")
+    plain_sections = receipt_mod.build_receipt(
+        plain, note=receipt_mod.next_note("fault", fault_kind="transient")
+    )["sections"]
+    assert DELIVERED_DESPITE_FAULT.format(1) not in plain_sections["deliver"]
+    assert DELIVERED_DESPITE_FAULT.format(1) not in plain_sections["next"]
+    assert DELIVERED_DESPITE_FAULT.format(1) not in plain_sections["fault"]
+
+
+def test_a_run_that_never_delivered_says_it_was_nudged() -> None:
+    """没交东西、却推了好几轮：交接处要如实说"推了 N 轮都没出口"，不许说成"一直在干活"。"""
+    outcome = ExecOutcome(
+        status="incomplete", fault="整趟超过墙钟上限（600s）", fault_kind="timeout", rounds=3
+    )
+    sections = receipt_mod.build_receipt(
+        outcome, note=receipt_mod.next_note("fault", fault_kind="timeout")
+    )["sections"]
+    assert NUDGED_WITHOUT_DELIVERY.format(3) in sections["fault"]
+
+    # 只跑了一轮（墙钟切在第一轮）不算"推了又推"—— 不许编
+    once = ExecOutcome(
+        status="incomplete", fault="整趟超过墙钟上限（600s）", fault_kind="timeout", rounds=1
+    )
+    once_sections = receipt_mod.build_receipt(
+        once, note=receipt_mod.next_note("fault", fault_kind="timeout")
+    )["sections"]
+    assert NUDGED_WITHOUT_DELIVERY.format(3) not in once_sections["fault"]

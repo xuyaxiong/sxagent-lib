@@ -299,7 +299,9 @@ def render_briefing(task: Task, store: ArtifactStore = DEFAULT_STORE) -> str:
 def absorb_outcome(rec: Task, outcome: Outcome) -> None:
     """把执行器的结果写进 Task，四个字段一个都不能少。
 
-    `artifacts` 只在非空时覆盖：这一轮没产出，不能把上一轮的抹掉。
+    `artifacts` **累加**：一个任务可以交很多份产物（技能每阶段一份很常见，不区分中间与
+    最终），这一趟交的不许把上一趟的顶掉 —— 顶掉了，下一趟的交接书里就"忘"了前面的。
+    其余字段照旧覆盖写。
     """
     rec["report"] = outcome.report
     # 它申报要的那条信息 —— 与 `report` 一样覆盖写：这一轮没申报就清空（它已经答上了 /
@@ -311,7 +313,7 @@ def absorb_outcome(rec: Task, outcome: Outcome) -> None:
     # 故障的"类"跟着一起落（台账据此选引导句），同样覆盖写。
     rec["fault_kind"] = outcome.fault_kind
     if outcome.artifacts:
-        rec["artifacts"] = list(outcome.artifacts)
+        rec["artifacts"] = [*(rec.get("artifacts") or []), *outcome.artifacts]
 
 
 #: 执行器三态 → `Task.stage`，只有这一处映射。三态是封闭枚举，所以这里穷举。

@@ -425,7 +425,7 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict[str, obje
 RECEIPT_KINDS: dict[str, str] = {
     "completed": "✅ **交付回执**（执行器已写入产物库 —— 平台只说这个事实）",
     "waiting": "❓ **执行器申报要信息**（`ask_user`：平台先试答，答不上转达给用户）",
-    "failed": "⚠️ **既没交付、也没说要什么**（推满轮次，交给主 agent 判）",
+    "failed": "⚠️ **既没交付、也没说要什么**（推了几轮都没出口，交给主 agent 判）",
     # 加新出口时，这张表和 `RECEIPT_LABEL` 要同时补，漏一个就是静默回落成裸 key。
     "fault": "⚠️ **平台故障**（这一轮**没跑成** —— 不是执行器干不了）",
     "rejected_skill": "⛔ **被平台拒绝**：没有这个技能",
