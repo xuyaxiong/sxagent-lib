@@ -26,7 +26,7 @@ from sxagent import session  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _fresh_session():
-    """每个用例一个会话 —— 产物 ID 从 `art_001` 重新发，用例之间不串。"""
+    """每个用例一个会话 —— 产物表、日志文件都跟着会话走，用例之间不串。"""
     with session.session("test") as s:
         yield s
 

@@ -33,9 +33,11 @@ class _SpyStore(MemoryArtifacts):
     def __init__(self) -> None:
         self.puts: list[str] = []
 
-    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+    async def put(
+        self, aid: str, title: str, summary: str, file_type: str, content: str
+    ) -> None:
         self.puts.append(aid)
-        super().put(aid, title, summary, file_type, content)
+        await super().put(aid, title, summary, file_type, content)
 
 
 def test_asking_wins_over_delivering() -> None:
@@ -59,8 +61,8 @@ async def test_executor_writes_into_the_injected_store(monkeypatch) -> None:
 
     outcome = await run_task(_skill("skill-a", MARKER_A), "交接书", artifacts=spy)
 
-    assert spy.puts == ["art_001"]
-    assert outcome.artifacts == ["art_001"]
+    assert len(spy.puts) == 1, "执行器交的产物该落进注入的那个库"
+    assert outcome.artifacts == spy.puts, "回执里报的产物 ID 就是落库的那一个"
 
 
 def _skill(name: str, marker: str) -> Skill:

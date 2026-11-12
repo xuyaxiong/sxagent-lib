@@ -51,6 +51,7 @@ EXEMPT: dict[tuple[str, str], str] = {
         "sxagent/artifacts.py",
         '(re.sub(r"[^\\w一-鿿]+", "-", s).strip("-") or "untitled")[:n]',
     ): "产物文件名：消毒 + 限长，正文原样落盘",
+    ("sxagent/artifacts.py", "uuid.uuid4().hex[:8]"): "产物 ID：取随机号的前 8 位，不是内容被切",
     ("sxagent/graph.py", "msgs[prev_n:]"): "取这一轮新增的消息，不丢内容",
     ("sxagent/handoff/__init__.py", "ls[1:]"): "列表项的续行，不丢内容",
     ("sxagent/handoff/briefing.py", "done_turns[: len(t_turns)]"): "比对原话快照的前缀，不是切",

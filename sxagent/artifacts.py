@@ -9,16 +9,19 @@
 1. 对外只给函数，不给 dict（同 `builtin_skills()`）。表私有，换实现只动这个文件。
 2. 类型靠硬派发，不嗅探内容。认不出来存 `DEFAULT_EXT`，不报错：产物已经做出来了，存不下比
    存错更糟。
-3. 落盘那份和库里那份一字不差，"这是哪一份"由文件名承载（`art_001_<标题>.md`）。
-4. ID 用 `itertools.count()` 发，不用 `len(表) + 1`：后者先查后写，中间有窗口，产物会静默丢。
+3. 落盘那份和库里那份一字不差，"这是哪一份"由文件名承载（`art_3f9a2c1d_<标题>.md`）。
+4. ID 是随机短号（`art_` + 8 位十六进制，`_next_aid`），发之前问一次 `has()`：会话对象
+   每请求一个（`with session()`），自增序号挂它就会跨轮重来；随机号不挂任何状态，跨轮、
+   跨重启都不会重。
 5. 落盘目录只能走 `use_dir()`，直接赋值写错模块不会当场报错。
-6. 表、发号器、落盘目录三样都挂会话上，不挂模块级。`write_artifact` 按 run 记账靠闭包
+6. 表、落盘目录两样都挂会话上，不挂模块级。`write_artifact` 按 run 记账靠闭包
    `created`，不靠事后扫消息文本猜。
 7. 工具返回的标题不用 `【…】`：那是段名的专用符号，记录层靠"独占行首"切分。"""
 
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -59,16 +62,21 @@ def artifact_slug(s: str, n: int = 40) -> str:
 class ArtifactStore(Protocol):
     """产物放哪 —— 库只认这几个方法，宿主可以用 OSS、数据库或别的什么实现它。
 
+    写（`put`）可以 await：宿主落 OSS / 数据库是网络 IO，阻塞事件循环是更坏的选择。
+    读（其余几个）保持同步 —— 库的语义是"读必须廉价"（宿主自己缓存 / 预载），廉价的东西
+    不该逼调用方 await。
+
     ## 不变量
 
-    1. `put` 返回那一刻，东西就得真的在："已写入产物 art_001"必须指得到。
-    2. ID 由**库**发（`art_001` 这种短形状，模型要照着抄），只在**本会话内**唯一 ——
-       一个实现服务多个会话时，自己按会话分前缀（OSS 分目录、数据库带 thread_id）。
+    1. `put` 返回那一刻，东西就得真的在："已写入产物 art_3f9a2c1d"必须指得到。
+    2. ID 由**库**发（`art_` + 8 位十六进制这种短形状，模型要照着抄），**跨轮、跨重启都
+       不会重**：随机号不挂任何状态，发之前只问一次 `has()`（一个实现服务多个会话时，
+       自己按会话分前缀：OSS 分目录、数据库带 thread_id）。
     3. 记录里有 `title` / `summary` / `content` / `type` / `ext` / `file`，落了盘再补 `path`。
        `where()` 给**裸值**（本地路径或 URL），怎么排版是库的事。
     """
 
-    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+    async def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
         """存一条产物。ID 由调用方（库）发好传进来。"""
 
     def get(self, aid: str) -> dict[str, str] | None:
@@ -94,7 +102,7 @@ class MemoryArtifacts:
     也不会串，各是各的。
     """
 
-    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+    async def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
         ext = file_ext(file_type)
         rec: dict[str, str] = {
             "title": title,
@@ -169,8 +177,20 @@ def clear() -> None:
     DEFAULT_STORE.clear()
 
 
-# 产物 ID 走 `Session.artifact_seq` 的发号器。用 `len(表) + 1` 有窗口：两个执行器会拿到
-# 同一个 ID，产物静默丢失。
+#: 发号最多试几次 —— 8 位十六进制的空间里连撞三次是不可能事件，真撞上只能是 `has()` 坏了。
+_AID_ATTEMPTS = 3
+
+
+def _next_aid(store: ArtifactStore) -> str:
+    """发下一个产物 ID：`art_` + 8 位十六进制（随机号的理由见模块头不变量 4）。
+
+    撞了就重发，但**有上界**：报错比死循环好，死循环会把执行器整趟卡死。
+    """
+    for _ in range(_AID_ATTEMPTS):
+        aid = f"art_{uuid.uuid4().hex[:8]}"
+        if not store.has(aid):
+            return aid
+    raise RuntimeError(f"连发 {_AID_ATTEMPTS} 个产物 ID 都撞了 —— 产物库的 `has()` 有问题")
 
 
 def use_dir(path: Path | None) -> None:
@@ -182,7 +202,7 @@ def use_dir(path: Path | None) -> None:
     session.current().artifact_dir = path
 
 
-def _store_into(
+async def _store_into(
     store: ArtifactStore, title: str, summary: str, file_type: str, content: str
 ) -> str:
     """发号 → 存 → 报一声，返回产物 ID。
@@ -190,8 +210,8 @@ def _store_into(
     发号在这儿、不在实现里：ID 是模型要照着抄的东西，形状得库说了算。落盘那条日志也在这儿
     ——换一个产物库（OSS），它照样得出现。
     """
-    aid = f"art_{next(session.current().artifact_seq):03d}"
-    store.put(aid, title, summary, file_type, content)
+    aid = _next_aid(store)
+    await store.put(aid, title, summary, file_type, content)
     where = store.where(aid)
     trace.note(
         f"✅ 产物落盘 · {aid}《{title}》（{len(content)} 字）"
@@ -201,9 +221,9 @@ def _store_into(
     return aid
 
 
-def store_artifact(title: str, summary: str, file_type: str, content: str) -> str:
+async def store_artifact(title: str, summary: str, file_type: str, content: str) -> str:
     """把产物落进产物库（库自带那个），返回产物 ID。"""
-    return _store_into(DEFAULT_STORE, title, summary, file_type, content)
+    return await _store_into(DEFAULT_STORE, title, summary, file_type, content)
 
 
 def make_write_artifact(created: list[str] | None = None, store: ArtifactStore = DEFAULT_STORE):
@@ -226,7 +246,7 @@ def make_write_artifact(created: list[str] | None = None, store: ArtifactStore =
                 平台据此**硬性按类型保存**：说 md 就存 `.md`，说 html 就存 `.html`。
             content: 产物正文全文。
         """
-        aid = _store_into(store, title, summary, file_type, content)
+        aid = await _store_into(store, title, summary, file_type, content)
         if created is not None:
             created.append(aid)
         a = store.get(aid) or {}

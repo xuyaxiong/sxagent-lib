@@ -14,7 +14,6 @@ API。状态挂模块级的话，用户 B 会看到用户 A 的全部产物。
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -35,9 +34,6 @@ class Session:
         #: 产物记录：`aid → {title, kind, file_type, content, file, path}`。
         #: 对外只有函数，不给这个 dict（`artifacts` 模块头不变量 1）。
         self.artifacts: dict[str, dict[str, str]] = {}
-        #: 产物 ID 发号器 —— 每会话一条序列（`next()` 原子，不用 `len(表) + 1` 那种
-        #: "先查后写"）。
-        self.artifact_seq: Iterator[int] = itertools.count(1)
         #: 产物落盘到哪。`None` = 只进内存（跑批那条路径就是这样）。
         self.artifact_dir: Path | None = None
         # ── 事件总线（`trace.py` 用）──

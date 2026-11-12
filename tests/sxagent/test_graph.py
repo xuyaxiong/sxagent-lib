@@ -38,9 +38,11 @@ class _SpyStore(MemoryArtifacts):
     def __init__(self) -> None:
         self.puts: list[str] = []
 
-    def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+    async def put(
+        self, aid: str, title: str, summary: str, file_type: str, content: str
+    ) -> None:
         self.puts.append(aid)
-        super().put(aid, title, summary, file_type, content)
+        await super().put(aid, title, summary, file_type, content)
 
 
 async def test_injected_artifact_store_is_actually_used(monkeypatch) -> None:
@@ -55,7 +57,7 @@ async def test_injected_artifact_store_is_actually_used(monkeypatch) -> None:
         {"configurable": {"thread_id": "test-inject-store"}},
     )
 
-    assert spy.puts == ["art_001"]
+    assert len(spy.puts) == 1, "它写了产物，就该落进注入的那个库"
 
 
 def test_injected_checkpointer_and_store_reach_the_graph() -> None:

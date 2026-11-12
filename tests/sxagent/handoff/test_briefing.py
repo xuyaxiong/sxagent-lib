@@ -68,14 +68,14 @@ def _fixture(**overrides: object) -> Task:
     return cast(Task, {**SENTINEL, **overrides})
 
 
-def _render(task: Task | None = None) -> str:
+async def _render(task: Task | None = None) -> str:
     """渲染一份交接书。
 
     产物先真的存进当前会话（`conftest` 每个用例给一个干净会话），`artifacts` / `refs`
     才渲染得出清单行。
     """
-    store_artifact("SENTINEL-TITLE-1", "哨兵梗概", "md", "哨兵正文")
-    store_artifact("SENTINEL-TITLE-2", "哨兵梗概", "md", "哨兵正文")
+    await store_artifact("SENTINEL-TITLE-1", "哨兵梗概", "md", "哨兵正文")
+    await store_artifact("SENTINEL-TITLE-2", "哨兵梗概", "md", "哨兵正文")
     return render_briefing(_fixture() if task is None else task)
 
 
@@ -90,32 +90,32 @@ def test_excluded_list_is_within_task_and_gives_reasons() -> None:
     assert all(reason.strip() for reason in EXCLUDED.values())
 
 
-def test_included_fields_reach_the_briefing() -> None:
-    text = _render()
+async def test_included_fields_reach_the_briefing() -> None:
+    text = await _render()
     missing = {
         key: [v for v in _sentinels(key) if v not in text] for key in set(SENTINEL) - set(EXCLUDED)
     }
     assert {key: v for key, v in missing.items() if v} == {}
 
 
-def test_excluded_fields_do_not_leak() -> None:
-    text = _render()
+async def test_excluded_fields_do_not_leak() -> None:
+    text = await _render()
     leaked = {key: [v for v in _sentinels(key) if v in text] for key in EXCLUDED}
     assert {key: v for key, v in leaked.items() if v} == {}
 
 
-def test_missing_artifact_ids_are_not_dropped() -> None:
+async def test_missing_artifact_ids_are_not_dropped() -> None:
     """坏数据要显式露出来：少一行和多一行"这条有问题"是两种不同的决定。"""
-    text = _render(_fixture(artifacts=["art_999"], refs=["art_998"]))
+    text = await _render(_fixture(artifacts=["art_999"], refs=["art_998"]))
     assert "art_999" in text
     assert "art_998" in text
 
 
-def test_artifacts_accumulate_across_runs() -> None:
+async def test_artifacts_accumulate_across_runs() -> None:
     """一个任务可以交很多份产物（技能每阶段一份很常见，不区分中间与最终）——
     这一趟交的不许把上一趟的顶掉；顶掉了，下一趟的交接书就"忘"了前面的。"""
-    store_artifact("哨兵一号", "梗概", "md", "正文")
-    store_artifact("哨兵二号", "梗概", "md", "正文")
+    await store_artifact("哨兵一号", "梗概", "md", "正文")
+    await store_artifact("哨兵二号", "梗概", "md", "正文")
     rec: Task = {"id": "t1", "skill": "some-skill"}
 
     absorb_outcome(rec, ExecOutcome(artifacts=["art_001"], report="第一趟"))

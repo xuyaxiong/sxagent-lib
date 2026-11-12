@@ -160,8 +160,10 @@ def _recording_store():
         def __init__(self) -> None:
             self.writes: list[dict[str, object]] = []
 
-        def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
-            super().put(aid, title, summary, file_type, content)
+        async def put(
+            self, aid: str, title: str, summary: str, file_type: str, content: str
+        ) -> None:
+            await super().put(aid, title, summary, file_type, content)
             self.writes.append(
                 {
                     "aid": aid,

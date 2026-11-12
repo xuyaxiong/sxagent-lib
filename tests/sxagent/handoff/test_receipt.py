@@ -73,8 +73,8 @@ def test_each_fault_kind_reads_differently() -> None:
         assert len(texts) == len(KINDS), f"{place} 这一处有两档说法相同：{sorted(texts)}"
 
 
-def test_no_fault_means_no_fault_section() -> None:
-    artifact_id = store_artifact("哨兵产物", "哨兵梗概", "md", "哨兵正文")
+async def test_no_fault_means_no_fault_section() -> None:
+    artifact_id = await store_artifact("哨兵产物", "哨兵梗概", "md", "哨兵正文")
     outcome = ExecOutcome(status="completed", artifacts=[artifact_id], report="哨兵报告")
     receipt = receipt_mod.build_receipt(
         outcome, note=receipt_mod.next_note("completed", skill="some-skill")
@@ -83,9 +83,9 @@ def test_no_fault_means_no_fault_section() -> None:
     assert "fault" not in receipt["sections"]
 
 
-def test_a_faulted_run_that_delivered_says_so() -> None:
+async def test_a_faulted_run_that_delivered_says_so() -> None:
     """故障话术默认"什么都没交"——交过的必须说清（有没有交 / 交得完不完整）。"""
-    artifact_id = store_artifact("哨兵产物", "哨兵梗概", "md", "哨兵正文")
+    artifact_id = await store_artifact("哨兵产物", "哨兵梗概", "md", "哨兵正文")
     outcome = ExecOutcome(
         status="completed",
         artifacts=[artifact_id],
