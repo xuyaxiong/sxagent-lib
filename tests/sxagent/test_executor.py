@@ -18,7 +18,7 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
 
-from sxagent import artifacts
+from sxagent import artifacts, trace
 from sxagent.artifacts import MemoryArtifacts
 from sxagent.executor import ExecOutcome, _structural_status, run_task
 from sxagent.skills import Skill
@@ -174,12 +174,17 @@ async def test_a_run_that_never_delivers_is_nudged_until_the_wall_clock(monkeypa
     """没有轮次上限：它自己不交东西，平台就一路推，最后由墙钟切停 —— 推了几轮要如实进账。"""
     monkeypatch.setattr("sxagent.executor.MAX_WALL_S", 1.0)
     fake = _NeverDeliversModel()
+    seen: list[dict[str, object]] = []
+    subscription = trace.subscribe(seen.append)
 
     outcome = await run_task(_skill("skill-a", MARKER_A), "交接书", model=fake)
+    subscription.cancel()
 
     assert outcome.fault_kind == "timeout"
     assert outcome.artifacts == []
     assert outcome.rounds > 1, "推了不止一轮才被切 —— 没有轮次上限在提前判死"
+    faults = [ev for ev in seen if ev.get("kind") == "run_fault"]
+    assert faults and faults[0]["fault_kind"] == "timeout", "分类要结构进事件，展示层不解析文本"
 
 
 async def test_a_runaway_round_is_cut_by_the_wall_clock(monkeypatch) -> None:

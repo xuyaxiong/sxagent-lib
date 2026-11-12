@@ -302,7 +302,9 @@ def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str
     # 这一趟写过的产物照记：故障不抹掉已经交出去的东西。账上"产物 0 个"而库里有，
     # 视图就说了假话（实测：被墙钟切掉的那趟写了 5 份，账里一份都没有）。
     outcome.artifacts = list(run.created)
-    trace.note(note, kind="run_fault")
+    # 分类是结构（`transient` / `rejected` / `timeout`）：展示层要按它决定话术与重试，
+    # 不该去解析那句中文。
+    trace.note(note, kind="run_fault", fields={"fault_kind": kind})
 
 
 async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None:

@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -228,12 +228,24 @@ def section(title: str, kind: str = "") -> None:
     )
 
 
-def note(text: str, kind: str = "") -> None:
+def note(
+    text: str, kind: str = "", *, fields: Mapping[str, object] | None = None
+) -> None:
     """一条记录（带时间戳）。只发内容，日志文件里的前缀（如 `finalize: `）归记录器。
 
     `text` 通常是一行；透传那条是例外 —— 它带的就是待答原文，本来就可能多行。
+    `fields` 是给订阅者的结构化补充（如故障分类）：记录器只渲染 `text`、不看它；
+    订阅者靠它做判断，不用去解析文本。
     """
-    _publish({"type": "note", "kind": _check_kind(kind, "note"), "text": text, "ts": stamp()})
+    ev: dict[str, object] = {
+        "type": "note",
+        "kind": _check_kind(kind, "note"),
+        "text": text,
+        "ts": stamp(),
+    }
+    if fields:
+        ev.update(fields)
+    _publish(ev)
 
 
 def block(label: str, text: str, *, kind: str = "", indent: str = "  ") -> None:

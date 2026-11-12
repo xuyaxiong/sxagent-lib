@@ -490,6 +490,7 @@ def _reply(
             + NOTE_BY_FAULT.get(outcome.fault_kind, NOTE_FAULT_UNCLASSIFIED)
             + delivered,
             kind="delegate_failed",
+            fields={"fault_kind": outcome.fault_kind},
         )
         return _out(
             runtime,
