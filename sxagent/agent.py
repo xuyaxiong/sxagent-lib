@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -71,6 +70,7 @@ from sxagent.skill_pack import (  # 技能来源：库自带的默认实现 ＋ 
     make_read_skill_file,
 )
 from sxagent.skills import Skill, SkillSource, render_catalog  # 技能领域 ＋ 来源接口
+from sxagent.tools import check_unique_tool_names  # 工具表规矩（与执行器共用一份）
 
 #: 主 agent 的 system prompt。它是平台约定，不约束 skill 作者。
 _MAIN_PROMPT = (
@@ -272,6 +272,7 @@ async def dispatch(
     artifacts: ArtifactStore = DEFAULT_STORE,
     skills: SkillSource = DEFAULT_SOURCE,
     model: BaseChatModel | None = None,
+    extra_tools: Sequence[BaseTool] = (),
 ) -> tuple[Outcome, str, list[Task]]:
     """派发编排，`delegate` 与 `graph._feed_waiting` 共用的那一段。
 
@@ -288,6 +289,7 @@ async def dispatch(
         artifacts=artifacts,
         skills=skills,
         model=model,
+        extra_tools=extra_tools,
     )
     absorb_outcome(rec, outcome)
     rec["run_by"] = trigger
@@ -513,6 +515,7 @@ def make_delegate(
     store: ArtifactStore = DEFAULT_STORE,
     source: SkillSource = DEFAULT_SOURCE,
     model: BaseChatModel | None = None,
+    extra_tools: Sequence[BaseTool] = (),
 ):
     """造一个 `delegate` 工具，落在给定的产物库与技能来源上。
 
@@ -590,6 +593,7 @@ def make_delegate(
             artifacts=store,
             skills=source,
             model=model,
+            extra_tools=extra_tools,
         )
 
         # ④ 回话 —— 按三态说回主 agent（穷举，没有第四种）。
@@ -616,7 +620,11 @@ EXEC_PATH = "auto"
 
 
 def _tools_for(
-    exec_path: str, store: ArtifactStore, source: SkillSource, model: BaseChatModel | None
+    exec_path: str,
+    store: ArtifactStore,
+    source: SkillSource,
+    model: BaseChatModel | None,
+    extra_tools: Sequence[BaseTool] = (),
 ) -> list[BaseTool]:
     """这条执行路径给哪些工具。改这里时想清楚：拿掉某个工具会不会顺手拿掉一条合法能力。
 
@@ -624,14 +632,14 @@ def _tools_for(
     """
     return {
         "auto": [
-            make_delegate(store, source, model),
+            make_delegate(store, source, model, extra_tools),
             make_write_artifact(store=store),
             make_read_artifact(store),
             make_list_artifacts(store),
             make_read_skill(source),
             make_read_skill_file(source),
         ],
-        "delegate": [make_delegate(store, source, model), make_list_artifacts(store)],
+        "delegate": [make_delegate(store, source, model, extra_tools), make_list_artifacts(store)],
         "inline": [
             make_write_artifact(store=store),
             make_read_artifact(store),
@@ -716,20 +724,6 @@ class _StopWhenPending(AgentMiddleware):
         return {"jump_to": "end"}
 
 
-def _check_tool_names(tools: Sequence[BaseTool]) -> None:
-    """工具名不许撞。
-
-    撞了模型叫哪个都说不清；而且提示词里写着"用 `write_artifact` 交付"这类话，两个同名的工具
-    会让那句话变成假话。宿主的领域工具和库的机制工具都不许重名。
-    """
-    dupes = sorted(name for name, n in Counter(t.name for t in tools).items() if n > 1)
-    if dupes:
-        raise ValueError(
-            f"工具名撞了：{'、'.join(dupes)} —— 库的机制工具和宿主的领域工具不许重名，"
-            "改宿主那个工具的名字（或者拿掉它，用库的同名工具）"
-        )
-
-
 def build_agent(
     state_schema: type,
     *,
@@ -746,9 +740,11 @@ def build_agent(
     `artifacts` 是宿主注入的产物库，`skills` 是技能来源（磁盘 / OSS / 数据库），`model` 是
     模型实例 —— 三者不传就用库自带的。`system_prompt` 是宿主的业务提示词，追加在机制段
     之后（机制段不可替换）；不传就一个字不加。
+    `extra_tools` 是宿主的领域工具：进主 agent 的工具表，**也**随每次委派交给执行器
+    （技能指令里写着用什么工具，执行器手边就得有什么）—— `delegate` 不在其中。
     """
-    tools = [*_tools_for(EXEC_PATH, artifacts, skills, model), *extra_tools]
-    _check_tool_names(tools)
+    tools = [*_tools_for(EXEC_PATH, artifacts, skills, model, extra_tools), *extra_tools]
+    check_unique_tool_names(tools)
     return create_agent(
         model or get_model(),
         tools=tools,

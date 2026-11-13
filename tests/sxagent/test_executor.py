@@ -210,3 +210,93 @@ async def test_a_runaway_round_is_cut_by_the_wall_clock(monkeypatch) -> None:
     assert outcome.status == "completed"
     assert len(fake.calls) < 10, "墙钟没拦住：内层转了很多步"
     assert 0 < len(outcome.artifacts) < 10, "被切掉那趟的产物要进账，也不该攒一堆"
+
+
+async def test_host_tools_reach_the_executor() -> None:
+    """宿主的领域工具要进执行器的工具表 —— 技能指令里写着用什么，它手边就得有什么。
+
+    用哨兵工具的反向断言：执行器调不到它的话，`called` 就是空的。
+    """
+    from langchain_core.tools import tool
+
+    called: list[str] = []
+
+    @tool
+    async def query_knowledge_sentinel(query: str) -> str:
+        """哨兵工具：执行器该能调到它。"""
+        called.append(query)
+        return "查到的材料"
+
+    class _SentinelFirstModel(ToolCallingFakeModel):
+        """执行器：先调哨兵工具，再交产物 —— 两步都当场证。"""
+
+        stage: str = "sentinel"
+
+        def _respond(self, messages: list[BaseMessage]) -> ChatResult:
+            if self.stage == "sentinel":
+                self.stage = "write"
+                self.calls.append(("sentinel", time.monotonic()))
+                return self._result(
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "query_knowledge_sentinel",
+                                "args": {"query": "材料关键词"},
+                                "id": "call-sentinel",
+                            }
+                        ],
+                    )
+                )
+            if self.stage == "write":
+                self.stage = "done"
+                return self._result(
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "write_artifact",
+                                "args": {
+                                    "title": "哨兵产物",
+                                    "summary": "哨兵梗概",
+                                    "file_type": "md",
+                                    "content": f"正文：{MARKER_A}",
+                                },
+                                "id": "call-write",
+                            }
+                        ],
+                    )
+                )
+            return self._result(AIMessage("执行器收尾"))
+
+    outcome = await run_task(
+        _skill("skill-a", MARKER_A),
+        "交接书",
+        model=_SentinelFirstModel(),
+        extra_tools=[query_knowledge_sentinel],
+    )
+
+    assert called == ["材料关键词"], "执行器没拿到宿主的工具"
+    assert outcome.status == "completed"
+
+
+async def test_host_tool_named_like_a_mechanism_tool_is_rejected() -> None:
+    """宿主的工具撞了机制工具名：当场报错。
+
+    挑 `ask_user` 试：它不在主 agent 的工具表里，主 agent 那道守卫盖不到 —— 执行器
+    自己得查一遍，否则一张表里两个同名工具，模型叫哪个都说不清。
+    """
+    from langchain_core.tools import tool
+
+    @tool
+    async def ask_user(question: str) -> str:
+        """撞名哨兵。"""
+        return ""
+
+    with pytest.raises(ValueError, match="工具名撞了"):
+        await run_task(
+            _skill("skill-a", MARKER_A),
+            "交接书",
+            model=ToolCallingFakeModel(),
+            extra_tools=[ask_user],
+        )

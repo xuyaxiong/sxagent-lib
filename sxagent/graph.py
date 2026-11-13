@@ -114,6 +114,7 @@ async def _deliver(
     artifacts: ArtifactStore,
     skills: SkillSource,
     model: BaseChatModel | None,
+    extra_tools: Sequence[BaseTool] = (),
 ) -> tuple[Task, list[str], list[Task]]:
     """投一条待答。返回投递后的 Task、一行日志，以及被取代的旧 Task。
 
@@ -142,6 +143,7 @@ async def _deliver(
         state.get("tasks") or [],
         trigger="feed",
         messages=state.get("messages") or [],
+        extra_tools=extra_tools,
         artifacts=artifacts,
         skills=skills,
         model=model,
@@ -164,7 +166,11 @@ async def _deliver(
 
 
 async def _feed_waiting(
-    state: State, artifacts: ArtifactStore, skills: SkillSource, model: BaseChatModel | None
+    state: State,
+    artifacts: ArtifactStore,
+    skills: SkillSource,
+    model: BaseChatModel | None,
+    extra_tools: Sequence[BaseTool] = (),
 ) -> tuple[list[Task], list[str]]:
     """把用户这条消息的原话投给它标明的那一个待答任务（`answer_to`）。
 
@@ -191,14 +197,21 @@ async def _feed_waiting(
         if skill is None:
             logs.append(f"feed: ⚠️ {t['id']} 的技能「{t['skill']}」不存在，跳过")
             continue
-        rec, more, mooted = await _deliver(state, t, skill, user, artifacts, skills, model)
+        rec, more, mooted = await _deliver(
+            state, t, skill, user, artifacts, skills, model, extra_tools
+        )
         logs += more
         out.extend(mooted)
         out.append(rec)
     return out, logs
 
 
-def _make_node_feed(artifacts: ArtifactStore, skills: SkillSource, model: BaseChatModel | None):
+def _make_node_feed(
+    artifacts: ArtifactStore,
+    skills: SkillSource,
+    model: BaseChatModel | None,
+    extra_tools: Sequence[BaseTool] = (),
+):
     """造 `feed` 那个节点：投递要按注入的技能来源查技能、按注入的产物库渲染交接书。"""
 
     async def node_feed(state: State) -> dict[str, object]:
@@ -206,7 +219,7 @@ def _make_node_feed(artifacts: ArtifactStore, skills: SkillSource, model: BaseCh
 
         只有一条返回路径：`answer_to` / `fed_asking` 是本轮信号，多一条路就多一处可漏。
         """
-        updated, logs = await _feed_waiting(state, artifacts, skills, model)
+        updated, logs = await _feed_waiting(state, artifacts, skills, model, extra_tools)
 
         # 投递之后执行器又问了吗 —— 判据是结构事实：投递过的那条落成了 `waiting_for_input`。
         fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
@@ -407,11 +420,12 @@ def build(
     就传进来）；`store` 是长期记忆，先留口子；`tools` 是**宿主的领域工具**，追加进主 agent 的
     工具表（库那组机制工具始终在，重名当场报错）；`artifacts` 是产物库（宿主可能落 OSS）；
     `skills` 是技能来源（宿主可能从数据库 / OSS 给）；`model` 是模型实例（宿主自己造的那个）；
-    `system_prompt` 是宿主的业务提示词，追加在机制段之后（机制段不可替换）。
+    `system_prompt` 是宿主的业务提示词，追加在机制段之后（机制段不可替换）；`tools` 是宿主的
+    领域工具 —— 主 agent 与执行器都有（技能指令里写着用什么工具，执行器手边就得有什么）。
     """
     g = StateGraph(State)
     # 顺序由边保证：先投递（里面同步跑执行器），后注入台账
-    g.add_node("feed", _make_node_feed(artifacts, skills, model))
+    g.add_node("feed", _make_node_feed(artifacts, skills, model, tools))
     g.add_node("prepare", node_prepare)
     # 主 agent：完整的 agent（工具 + 循环）
     g.add_node(

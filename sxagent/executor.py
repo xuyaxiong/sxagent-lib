@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,7 @@ from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.tools import BaseTool
 
 from sxagent import stream, trace
 from sxagent.artifacts import (
@@ -49,6 +51,7 @@ from sxagent.skill_pack import (  # 技能来源：库自带的默认实现 ＋ 
     skill_file_prompt,
 )
 from sxagent.skills import Skill, SkillSource  # 技能领域 ＋ 来源接口
+from sxagent.tools import check_unique_tool_names  # 工具表规矩（与主 agent 共用一份）
 
 if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
     from langgraph.graph.state import CompiledStateGraph
@@ -209,20 +212,25 @@ def _build_executor(
     artifacts: ArtifactStore,
     skills: SkillSource,
     model: BaseChatModel | None,
+    extra_tools: Sequence[BaseTool] = (),
 ):
     """建执行器那个子 agent：工具表加平台规则。
 
     `created` / `asked` 是工具闭包，两者得绑在同一份闭包上；产物那两个工具落在注入的产物库上，
-    读技能文件那个落在注入的技能来源上；`model` 不给就用库自带那个。
+    读技能文件那个落在注入的技能来源上；`model` 不给就用库自带那个。`extra_tools` 是宿主的
+    领域工具（生图、识图、查库这些）—— 技能指令里写着用什么工具，执行器手边就得有什么，
+    否则它只能停下来要材料。`delegate` 不在其中：委派是主 agent 的动作。
     """
     tools = [
         make_write_artifact(created, store=artifacts),
         make_read_artifact(artifacts),
         make_read_skill_file(skills),
         make_ask_user(asked),
+        *extra_tools,
     ]
     if user_turns:
         tools.append(_user_turn_reader(user_turns))
+    check_unique_tool_names(tools)
     return create_agent(
         model or get_model(),
         tools=tools,
@@ -238,11 +246,12 @@ def _open_run(
     artifacts: ArtifactStore,
     skills: SkillSource,
     model: BaseChatModel | None,
+    extra_tools: Sequence[BaseTool] = (),
 ) -> tuple[_Run, CompiledStateGraph]:
     """准备：建 agent、渲染这一趟的输入、写开跑前那几条日志。返回 `(运行态, agent)`。"""
     created: list[str] = []
     asked: dict[str, str] = {}
-    agent = _build_executor(user_turns, created, asked, artifacts, skills, model)
+    agent = _build_executor(user_turns, created, asked, artifacts, skills, model, extra_tools)
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
     # 技能自带文件时把清单（路径 + 字数）一起给执行器，正文按需 `read_skill_file` 读。
@@ -472,6 +481,7 @@ async def run_task(
     artifacts: ArtifactStore = DEFAULT_STORE,
     skills: SkillSource = DEFAULT_SOURCE,
     model: BaseChatModel | None = None,
+    extra_tools: Sequence[BaseTool] = (),
 ) -> ExecOutcome:
     """通用执行器：干活、判定出口、没出口就推它继续。
 
@@ -481,7 +491,7 @@ async def run_task(
 
     它自己只做编排：准备 → `for 轮次: 跑一轮 → 判出口` → 收尾。
     """
-    run, agent = _open_run(skill, briefing, user_turns, artifacts, skills, model)
+    run, agent = _open_run(skill, briefing, user_turns, artifacts, skills, model, extra_tools)
     round_i = 0
     while True:  # 出口只有两个：它交东西/申报要信息，或者墙钟把它切停（没有轮次上限）
         resp = await _run_round(run, agent, round_i)
