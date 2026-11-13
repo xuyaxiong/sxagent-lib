@@ -102,6 +102,9 @@ class ExecOutcome:
     rounds: int = 0
     #: 它申报要的信息（`ask_user` 的原话；空 = 没申报）。结构：平台直接看得见。
     asked: str = ""
+    #: `ask_user` 给的备选（可空 = 没给，用户自由答）。调用方可能渲染成按钮 ——
+    #: 是结构，不从 `asked` 那句话里解析。
+    asked_options: list[str] = field(default_factory=list)
     #: 平台故障（非空 = 这一轮根本没跑成，不是执行器干不了）。不能塞进 `report`，
     #: 故障时 `status` 仍是三态里的值。
     fault: str = ""
@@ -112,25 +115,31 @@ class ExecOutcome:
     fault_kind: FaultKind = ""
 
 
-def make_ask_user(asked: dict[str, str]):
+def make_ask_user(asked: dict[str, object]):
     """造 `ask_user` 工具 —— 执行器要信息的唯一出口。
 
-    它一调，平台直接看见两件事：它卡住了，它要什么（`question` 的原话）。之后平台让主
-    agent 先试答，答不上才把原话转给用户。这一轮到此结束，它调完工具接着说的那半截话
-    不进结论。闭包按 run 归属，不用模块级全局。
+    它一调，平台直接看见三件事：它卡住了，它要什么（`question` 的原话），以及有没有
+    备选（`options`）。之后平台让主 agent 先试答，答不上才把原话转给用户。这一轮到此
+    结束，它调完工具接着说的那半截话不进结论。闭包按 run 归属，不用模块级全局。
     """
 
     @tool
-    async def ask_user(question: str) -> str:
+    async def ask_user(question: str, options: list[str] | None = None) -> str:
         """你**没法往下干**了，需要一条你自己拿不到的信息 —— 用这个问。
 
         Args:
             question: **具体、能直接回答**的一句话（如"这次要按哪个范围做？"）。
                 一次问一件；**能自己判断的别问**（会打扰用户）。
+            options: 有明确候选**就写进这里**（用户点一下就答了）；**不要**把候选写进
+                `question` 那句话里再让人去括号里抠 —— 选项是结构，不是散文。确实没有
+                明确备选时才省略，用户自由回答。
 
         ⚠️ **要信息必须用它**：写在回复正文里**平台看不到**（平台不读正文）。
         """
         asked["question"] = str(question or "").strip()
+        # 选项一起带给平台：调用方可能把它们渲染成按钮（前端的事），结构从这一路走，
+        # 不靠解析问题文本。
+        asked["options"] = [str(o).strip() for o in (options or []) if str(o).strip()]
         # 说的是「这一次登记了什么」，不是流程说明：先说刚发生的那件事，再用「接下来」
         # 交代后手。这行只是记录 —— `run_task` 看到 `asked` 就 break，它回不到执行器眼里。
         return (
@@ -201,8 +210,8 @@ class _Run:
     outcome: ExecOutcome
     #: 这次 run 写了哪些产物 —— 由工具自己记（闭包，按 run 归属）
     created: list[str]
-    #: `ask_user` 申报的内容（闭包，同 `created`）
-    asked: dict[str, str]
+    #: `ask_user` 申报的内容（闭包，同 `created`）：`question` ＋ 可选 `options`
+    asked: dict[str, object]
 
 
 def _build_executor(
@@ -250,7 +259,7 @@ def _open_run(
 ) -> tuple[_Run, CompiledStateGraph]:
     """准备：建 agent、渲染这一趟的输入、写开跑前那几条日志。返回 `(运行态, agent)`。"""
     created: list[str] = []
-    asked: dict[str, str] = {}
+    asked: dict[str, object] = {}
     agent = _build_executor(user_turns, created, asked, artifacts, skills, model, extra_tools)
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
@@ -409,6 +418,7 @@ def _decide_exit(run: _Run, resp: dict[str, object], round_i: int) -> str:
     # ① 它申报了要信息（调了 `ask_user`）→ 这一轮到此结束，后面那半截话不进结论。
     if run.asked.get("question"):
         outcome.asked = run.asked["question"]
+        outcome.asked_options = [str(o) for o in (run.asked.get("options") or [])]
         # 「问」是一条链，这一跳是链头：执行器 → 平台。问题原话由上面那条 TOOL 行给全。
         trace.handoff(
             "要信息",

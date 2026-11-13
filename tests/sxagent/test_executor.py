@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.outputs import ChatResult
 
 from sxagent import artifacts, trace
@@ -300,3 +300,36 @@ async def test_host_tool_named_like_a_mechanism_tool_is_rejected() -> None:
             model=ToolCallingFakeModel(),
             extra_tools=[ask_user],
         )
+
+
+async def test_ask_user_options_ride_to_the_outcome() -> None:
+    """`ask_user` 给了备选就一路带进结果：结构走结构的路，谁都不用去解析那句话。"""
+    from langchain_core.messages import AIMessage
+
+    class _AskingModel(ToolCallingFakeModel):
+        """问一次就收尾 —— 无状态：已经有工具结果就说明问过了。"""
+
+        def _respond(self, messages: list[BaseMessage]) -> ChatResult:
+            if any(isinstance(m, ToolMessage) for m in messages):
+                return self._result(AIMessage("等答复"))
+            return self._result(
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "ask_user",
+                            "args": {
+                                "question": "这节课侧重哪种上法？",
+                                "options": ["探究型", "讲解型"],
+                            },
+                            "id": "call-ask",
+                        }
+                    ],
+                )
+            )
+
+    outcome = await run_task(_skill("skill-a", MARKER_A), "交接书", model=_AskingModel())
+
+    assert outcome.status == "waiting_for_input"
+    assert outcome.asked == "这节课侧重哪种上法？"
+    assert outcome.asked_options == ["探究型", "讲解型"]

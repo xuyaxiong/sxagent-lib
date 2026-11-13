@@ -74,6 +74,9 @@ class Task(TypedDict, total=False):
     #: 它申报要的那条信息 —— `ask_user(question)` 参数里的原话（覆盖写）。
     #: 结构性事实必须落进 Task，下游才有对象可用（不然只能用散文）—— 与 `fault` 同一个病。
     asked: str
+    #: `ask_user` 给的备选（空 = 没给）。调用方（通道）可能把它渲染成按钮 —— 是结构，
+    #: 谁都不许回头从 `asked` 那句话的括号里解析。
+    asked_options: list[str]
     #: 平台故障的原因（非空 = 这一轮根本没跑成，不是执行器干不了；空 = 没故障）。
     #: 事实只有这一处定义：回执的【平台故障】与台账的标记都是它的视图。
     fault: str
@@ -307,6 +310,8 @@ def absorb_outcome(rec: Task, outcome: Outcome) -> None:
     # 它申报要的那条信息 —— 与 `report` 一样覆盖写：这一轮没申报就清空（它已经答上了 /
     # 已经交付了，"待答"这个状态就结束了）。
     rec["asked"] = outcome.asked
+    # 备选跟着一起覆盖写：这一轮没申报就没备选，免得上一轮的选项阴魂不散。
+    rec["asked_options"] = list(outcome.asked_options)
     # 平台故障也落进 Task，同样覆盖写：正常跑完就清空，不然一个瞬时的故障会在台账里
     # 阴魂不散。
     rec["fault"] = outcome.fault
