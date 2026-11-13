@@ -102,3 +102,24 @@ async def test_ids_are_unique_across_requests() -> None:
 
     assert len(set(created)) == 2
     assert all(re.fullmatch(r"art_[0-9a-f]{8}", aid) for aid in created)
+
+
+def test_declared_type_is_taken_as_the_extension() -> None:
+    """类型是模型交付时说的，照它存：`csv` 就是 `.csv`，不再是静默的 `.md`。"""
+    from sxagent.artifacts import file_ext
+
+    assert file_ext("csv") == ".csv"
+    assert file_ext("JSON") == ".json"
+    assert file_ext(".svG") == ".svg"
+    assert file_ext("markdown") == ".md"  # 别名照认
+    assert file_ext("htm") == ".html"
+
+
+def test_unusable_type_falls_back_to_md() -> None:
+    """说不像个扩展名的就落 md 兜底 —— 不报错：产物已经做出来了，存不下比存错更糟。"""
+    from sxagent.artifacts import file_ext
+
+    assert file_ext("") == ".md"
+    assert file_ext("不要这种") == ".md"
+    assert file_ext("a/b") == ".md"
+    assert file_ext("way-too-long-type") == ".md"

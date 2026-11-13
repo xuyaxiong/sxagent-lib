@@ -7,8 +7,8 @@
 ## 不变量
 
 1. 对外只给函数，不给 dict（同 `builtin_skills()`）。表私有，换实现只动这个文件。
-2. 类型靠硬派发，不嗅探内容。认不出来存 `DEFAULT_EXT`，不报错：产物已经做出来了，存不下比
-   存错更糟。
+2. 类型靠硬派发，不嗅探内容：类型是产出方（模型）在交付时说的，照它存；认不出来存
+   `DEFAULT_EXT`，不报错：产物已经做出来了，存不下比存错更糟。
 3. 落盘那份和库里那份一字不差，"这是哪一份"由文件名承载（`art_3f9a2c1d_<标题>.md`）。
 4. ID 是随机短号（`art_` + 8 位十六进制，`_next_aid`），发之前问一次 `has()`：会话对象
    每请求一个（`with session()`），自增序号挂它就会跨轮重来；随机号不挂任何状态，跨轮、
@@ -31,21 +31,26 @@ from sxagent import session, trace
 
 # ──────────────────────────── 产物类型（声明 + 硬性派发） ────────────────────────────
 
-#: 声明的文件类型 → 扩展名 —— 平台据此硬性派发保存。不嗅探内容：类型是产出方在交付时说的。
-#: 要支持新类型就往这张表里加一行 —— 派发规则只有这一处。
-FILE_TYPES: dict[str, str] = {
-    "md": ".md",
-    "markdown": ".md",
-    "html": ".html",
-    "htm": ".html",
-}
+#: 声明里的别名 → 标准扩展名。只有这两个：`markdown` / `htm` 和标准写法指同一件事，
+#: 别的类型（`csv` / `json` / `svg`……）照原样当扩展名用 —— 类型是产出方在交付时说的。
+FILE_TYPE_ALIASES: dict[str, str] = {"markdown": "md", "htm": "html"}
 #: 声明缺失 / 认不出来时存成什么。不报错：产物已经产出来了，存不下比存错更糟。
 DEFAULT_EXT = ".md"
 
+#: 认得出的扩展名长什么样：字母数字，1 到 8 位（`md` / `csv` / `docx`…）。
+_EXT_RE = re.compile(r"[a-z0-9]{1,8}")
+
 
 def file_ext(file_type: str) -> str:
-    """声明的类型 → 扩展名（大小写、带不带点、`markdown`/`htm` 都认）。"""
-    return FILE_TYPES.get((file_type or "").strip().lstrip(".").lower(), DEFAULT_EXT)
+    """声明的类型 → 扩展名。类型是产出方（模型）在交付时说的，照它存。
+
+    大小写、带不带点、`markdown` / `htm` 两个别名都认；说不像个扩展名的（空、带空格、
+    带路径符号）落 `DEFAULT_EXT` —— 兜底不报错，见它上面那行。
+    """
+    name = FILE_TYPE_ALIASES.get((file_type or "").strip().lstrip(".").lower(), "")
+    if not name:
+        name = (file_type or "").strip().lstrip(".").lower()
+    return f".{name}" if _EXT_RE.fullmatch(name) else DEFAULT_EXT
 
 
 def artifact_slug(s: str, n: int = 40) -> str:
@@ -242,8 +247,9 @@ def make_write_artifact(created: list[str] | None = None, store: ArtifactStore =
             title: 产物名。
             summary: **一句话梗概** —— 它是产物对外露出的那一层：主 agent 靠它决定
                 要不要读全文、要不要把它传给下一个技能。不写梗概，别人只能读全文。
-            file_type: **文件类型**（`md` / `html`）—— 由**产出方**在交付时一起说，
-                平台据此**硬性按类型保存**：说 md 就存 `.md`，说 html 就存 `.html`。
+            file_type: **文件类型**（`md` / `html` / `csv` / `json` / `svg`…… 文本格式的
+                扩展名）—— 由**产出方**在交付时一起说，平台据此**硬性按类型保存**：
+                说 md 就存 `.md`，说 csv 就存 `.csv`；认不出的按 `md` 存。
             content: 产物正文全文。
         """
         aid = await _store_into(store, title, summary, file_type, content)
