@@ -187,6 +187,30 @@ async def test_a_run_that_never_delivers_is_nudged_until_the_wall_clock(monkeypa
     assert faults and faults[0]["fault_kind"] == "timeout", "分类要结构进事件，展示层不解析文本"
 
 
+async def test_tool_calls_report_start_and_end(monkeypatch) -> None:
+    """执行器每次调工具要报两条机制事件（起 / 止）—— 宿主靠它把执行器的工具行显示出来。
+
+    换图后执行器的图事件整个被过滤，不报就等于全黑。断的是"报得出、带结构"：名字、
+    起止、成败、耗时都在字段里，展示层不用去解析那句话。
+    """
+    fake = ToolCallingFakeModel()
+    monkeypatch.setattr("sxagent.executor.get_model", lambda *a, **k: fake)
+    seen: list[dict[str, object]] = []
+    subscription = trace.subscribe(seen.append)
+
+    outcome = await run_task(_skill("skill-a", MARKER_A), "交接书")
+    subscription.cancel()
+
+    assert outcome.status == "completed"
+    tool_events = [e for e in seen if e.get("kind") == "executor_tool"]
+    starts = [e for e in tool_events if e.get("state") == "start"]
+    ends = [e for e in tool_events if e.get("state") == "end"]
+    assert [e["tool"] for e in starts] == ["write_artifact"]
+    assert [e["tool"] for e in ends] == ["write_artifact"], "起止要成对，止只报一次"
+    assert ends[0]["ok"] is True
+    assert isinstance(ends[0]["elapsed_s"], float)
+
+
 async def test_a_runaway_round_is_cut_by_the_wall_clock(monkeypatch) -> None:
     """内层循环转不完的一趟，要在墙钟内被就地叫停 —— 实测里它跑过 20 分钟、写了 14 份产物。
 

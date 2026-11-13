@@ -136,6 +136,9 @@ async def _stream_agent(graph, state, config, who: str, role: str):
             f"⏳ {who} 正在写 `{tool_name or '?'}`：**已收到 {arg_chars} 字**"
             f"（这一段已 {now - reported_at:.0f}s；写完会落盘，正文不在这里流）",
             kind="writing",
+            # 工具名走结构：展示层要把它和后面那条工具回调（executor_tool）对上，
+            # 不许从这句话的反引号里抠。
+            fields={"tool": tool_name},
         )
         reported_chars, reported_at = arg_chars, now
 

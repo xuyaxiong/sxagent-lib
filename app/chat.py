@@ -303,6 +303,7 @@ _ROLE_BY_KIND: dict[str, str] = {
     "delivered": "exec",  # 执行器交付了产物 → 这一轮结束
     "writing": "exec",  # 正在写工具参数（写产物那段 —— 报"已收到 N 字"）
     "artifact": "exec",  # 产物落盘了（ID / 标题 / 字数 / 路径）
+    "executor_tool": "exec",  # 执行器调了一次工具（起 / 止各一条：名字、耗时、成败）
 }
 
 #: 有专门渲染分支的 kind（不走上表那条摘要行的路）。

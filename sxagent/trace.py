@@ -186,6 +186,8 @@ KINDS = frozenset(
         "run_end",
         "executor_briefing",
         "nudge",
+        # executor 的工具回调（`executor_tool` = 执行器调了一次工具：起 / 止各一条）
+        "executor_tool",
         # graph.prepare / finalize
         "feed",
         "relay",
