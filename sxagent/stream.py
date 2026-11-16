@@ -71,12 +71,14 @@ async def _stream_with_retry(graph, state, config, who: str, role: str):
             )
 
 
-#: 写产物的进度。模型写产物时输出的是工具调用参数，`_chunk_text` 只认 content，那几分钟
-#: 一个字都上不了屏，所以这里按参数累计字数报进度。不点名工具：小工具几十字不报，
-#: `write_artifact` 一写几千字会报。
+#: 写产物的进度。`write_artifact` 那几分钟模型输出的是工具调用参数，`_chunk_text` 只认
+#: content，一个字都上不了屏，所以按参数累计字数报一行进度。**只报这一个工具**：别的
+#: 工具的参数是任务描述这类短文本（`delegate`、`ask_user` 都可能超阈值），报出来像是
+#: "正在交付"，误导。
+_WRITE_TOOL = "write_artifact"
 _WRITE_REPORT_AT = 200  # 参数超过这么多字才开始报
-_WRITE_REPORT_EVERY = 1000  # 之后每多这么多字报一次
-_WRITE_REPORT_EVERY_S = 20  # 或者每这么久报一次（字少但很慢时）
+_WRITE_REPORT_EVERY = 300  # 之后每多这么多字报一次
+_WRITE_REPORT_EVERY_S = 8  # 或者每这么久报一次（字少但很慢时）
 
 
 def _tool_arg_delta(chunk) -> tuple[str, int]:
@@ -122,19 +124,19 @@ async def _stream_agent(graph, state, config, who: str, role: str):
     def maybe_report() -> None:
         """参数够多了吗？够了就报一行进度。报的是事实（已收到多少字、过了多久），不是预测。"""
         nonlocal reported_chars, reported_at
-        if arg_chars < _WRITE_REPORT_AT:
+        if tool_name != _WRITE_TOOL or arg_chars < _WRITE_REPORT_AT:
             return
         now = time.monotonic()
         # 第一次跨过 `_WRITE_REPORT_AT` 就报（那一行就是用户要的"开始"）—— 无条件比
-        # "每多 1000 字"的话，第一条要等到 1000 字才出来（前 500 字仍然静音）。
+        # "每多 300 字"的话，第一条要等到 300 字才出来（前 200 字仍然静音）。
         if reported_chars and (
             arg_chars - reported_chars < _WRITE_REPORT_EVERY
             and now - reported_at < _WRITE_REPORT_EVERY_S
         ):
             return
         trace.note(
-            f"⏳ {who} 正在写 `{tool_name or '?'}`：**已收到 {arg_chars} 字**"
-            f"（这一段已 {now - reported_at:.0f}s；写完会落盘，正文不在这里流）",
+            f"⏳ {who} 正在写 `{tool_name}`：**已收到 {arg_chars} 字**"
+            f"（这一段已 {now - reported_at:.0f}s）",
             kind="writing",
             # 工具名走结构：展示层要把它和后面那条工具回调（executor_tool）对上，
             # 不许从这句话的反引号里抠。
