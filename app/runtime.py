@@ -227,10 +227,9 @@ def _count_tokens():
 def install(case: dict[str, object]) -> dict[str, object]:
     """装好全部观测与注入，必须在 `build()` 之前调用。
 
-    返回里的 `model` / `store` / `skills` 要原样交给 `build()` —— 库那几处只认注入进来的东西。
+    返回里的 `model` / `store` / `skills` / `exec_path` 要原样交给 `build()` —— 库那几处
+    只认注入进来的东西。
     """
-    import sxagent.agent
-
     # ① 产物库：观测层走接口注入，现造一个。产物挂在会话上，所以要显式清 —— 不清会带上
     #    上一个 case 的。
     store = _recording_store()
@@ -239,9 +238,9 @@ def install(case: dict[str, object]) -> dict[str, object]:
     skills = _skills_source(case)
     # ③ 执行器调用流水（打桩在 `executor.run_task` 上：两条路都汇到 `agent.dispatch`）
     run_tasks = _record_run_tasks()
-    # ④ 执行路径开关（case 可选），默认 auto（两条路都开）。想验执行器的正文交付就得让
-    # 委派真的发生，靠碰运气压路径的断言必然脆。见 `sxagent/agent.EXEC_PATH`。
-    sxagent.agent.EXEC_PATH = str(case.get("exec_path") or "auto")
+    # ④ 执行路径（case 可选），默认 auto（两条路都开）。想验执行器的正文交付就得让
+    # 委派真的发生，靠碰运气压路径的断言必然脆。三档语义见 `sxagent/agent.EXEC_PATHS`。
+    exec_path = str(case.get("exec_path") or "auto")
     # ④′ 模型：token / 调用计数挂在注入的那个实例上
     model, counter = _count_tokens()
 
@@ -253,6 +252,7 @@ def install(case: dict[str, object]) -> dict[str, object]:
         "store": store,
         "skills": skills,
         "run_tasks": run_tasks,
+        "exec_path": exec_path,
         "fault": {"left": 0, "fired": 0},
         "stream_fault": {"left": 0, "fired": 0},
     }

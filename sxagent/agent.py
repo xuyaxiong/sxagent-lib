@@ -614,9 +614,23 @@ def make_delegate(
 
 # ──────────────────────────── 装配 ────────────────────────────
 
-#: 执行路径开关。跑批时想验某条链路，得能把它固定住。
+#: 执行路径的三档值（`build(exec_path=…)` 的合法取值）：
+#: `auto` 两条路都开（默认）；`delegate` 强制委派；`inline` 强制主 agent 自己干。
 #: `inline` 是全硬的（工具根本不存在），`delegate` 是半硬的（拿掉原料，但挡不住它直接写）。
-EXEC_PATH = "auto"
+EXEC_PATHS = ("auto", "delegate", "inline")
+
+
+def validate_exec_path(exec_path: str) -> str:
+    """按枚举校验执行路径，返回原值；不合法当场报错。
+
+    不校验的话，非法值会在 `_tools_for` 的字典取键处炸成 KeyError，读日志的人看不出
+    是哪个参数错了、合法值是什么。
+    """
+    if exec_path not in EXEC_PATHS:
+        raise ValueError(
+            f"exec_path 不合法：{exec_path!r}。合法值：{'、'.join(EXEC_PATHS)}"
+        )
+    return exec_path
 
 
 def _tools_for(
@@ -658,7 +672,7 @@ def tool_names() -> set[str]:
     """
     return {
         tool.name
-        for mode in ("auto", "delegate", "inline")
+        for mode in EXEC_PATHS
         for tool in _tools_for(mode, DEFAULT_STORE, DEFAULT_SOURCE, None)
     }
 
@@ -732,24 +746,28 @@ def build_agent(
     model: BaseChatModel | None = None,
     extra_tools: Sequence[BaseTool] = (),
     system_prompt: str | None = None,
+    exec_path: str = "auto",
 ) -> CompiledStateGraph:
     """主 agent：一个完整的 agent（工具 + 循环）。
 
-    工具集 = `EXEC_PATH` 定的那组机制工具（`delegate` / `write_artifact` / …）**加上**宿主的
+    工具集 = `exec_path` 定的那组机制工具（`delegate` / `write_artifact` / …）**加上**宿主的
     领域工具；重名当场报错。机制工具不可摘：摘了机制就不完整，提示词里那些话也成了假话。
     `artifacts` 是宿主注入的产物库，`skills` 是技能来源（磁盘 / OSS / 数据库），`model` 是
     模型实例 —— 三者不传就用库自带的。`system_prompt` 是宿主的业务提示词，追加在机制段
     之后（机制段不可替换）；不传就一个字不加。
     `extra_tools` 是宿主的领域工具：进主 agent 的工具表，**也**随每次委派交给执行器
     （技能指令里写着用什么工具，执行器手边就得有什么）—— `delegate` 不在其中。
+    `exec_path` 是执行路径（`EXEC_PATHS` 三档，默认 `auto`），由业务层在装配时定；
+    非法值当场报错，不合法就整个图都不装。
     """
-    tools = [*_tools_for(EXEC_PATH, artifacts, skills, model, extra_tools), *extra_tools]
+    exec_path = validate_exec_path(exec_path)
+    tools = [*_tools_for(exec_path, artifacts, skills, model, extra_tools), *extra_tools]
     check_unique_tool_names(tools)
     return create_agent(
         model or get_model(),
         tools=tools,
         system_prompt=_MAIN_PROMPT
-        + _MODE_NOTE.get(EXEC_PATH, "")
+        + _MODE_NOTE.get(exec_path, "")
         + "\n\n可用技能：\n"
         + render_catalog(skills.values())
         + (f"\n\n{system_prompt}" if system_prompt else ""),

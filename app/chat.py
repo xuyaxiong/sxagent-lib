@@ -635,7 +635,7 @@ def _parse_args() -> argparse.Namespace:
         default="auto",
         help="执行路径：auto 两条都开（默认，产品行为）｜ delegate **强制委派**（主 agent 拿不到"
         "自己干的工具）｜ inline 强制主 agent 自己干（不给 delegate）。"
-        "⚠️ 想验「执行器那条链路」时用它，别靠碰运气 —— 见 sxagent/agent.EXEC_PATH",
+        "⚠️ 想验「执行器那条链路」时用它，别靠碰运气 —— 它原样交给 `build(exec_path=…)`",
     )
     return ap.parse_args()
 
@@ -849,8 +849,13 @@ def main() -> None:
     inst = install(
         {"skills_dir": args.skills, "skills_mode": "replace", "exec_path": args.exec_path}
     )
-    # 模型、产物库、技能来源都由 `install()` 造好、注入进来：库那几处不认全局表。
-    graph = build(model=inst["model"], artifacts=inst["store"], skills=inst["skills"])
+    # 模型、产物库、技能来源、执行路径都由 `install()` 造好、注入进来：库那几处不认全局表。
+    graph = build(
+        model=inst["model"],
+        artifacts=inst["store"],
+        skills=inst["skills"],
+        exec_path=str(inst["exec_path"]),
+    )
     config = {"configurable": {"thread_id": args.thread}}
     session.use(args.thread)  # 进程就是一次会话：thread_id 进事件、日志带标识
 

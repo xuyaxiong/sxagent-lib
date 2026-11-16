@@ -413,6 +413,7 @@ def build(
     skills: SkillSource = DEFAULT_SOURCE,
     model: BaseChatModel | None = None,
     system_prompt: str | None = None,
+    exec_path: str = "auto",
 ) -> CompiledStateGraph:
     """把父图拼起来 —— 四个节点、一条直线。
 
@@ -422,6 +423,8 @@ def build(
     `skills` 是技能来源（宿主可能从数据库 / OSS 给）；`model` 是模型实例（宿主自己造的那个）；
     `system_prompt` 是宿主的业务提示词，追加在机制段之后（机制段不可替换）；`tools` 是宿主的
     领域工具 —— 主 agent 与执行器都有（技能指令里写着用什么工具，执行器手边就得有什么）。
+    `exec_path` 是主 agent 的执行路径（`EXEC_PATHS` 三档：`auto` 两条路都开 / `delegate`
+    强制委派 / `inline` 强制主 agent 自己干），由业务层在装配时定，默认 `auto`。
     """
     g = StateGraph(State)
     # 顺序由边保证：先投递（里面同步跑执行器），后注入台账
@@ -438,6 +441,7 @@ def build(
                 model=model,
                 extra_tools=tools,
                 system_prompt=system_prompt,
+                exec_path=exec_path,
             )
         ),
     )
