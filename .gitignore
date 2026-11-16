@@ -29,3 +29,6 @@ skills/zhiwo-ai-multi-role-agent-builder/
 
 # 本地临时目录（审查报告、草稿等，不入库）
 tmp/
+
+# macOS 的目录元数据文件
+.DS_Store
