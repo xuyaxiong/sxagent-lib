@@ -211,6 +211,25 @@ async def test_tool_calls_report_start_and_end(monkeypatch) -> None:
     assert isinstance(ends[0]["elapsed_s"], float)
 
 
+async def test_model_calls_report_a_thinking_event(monkeypatch) -> None:
+    """执行器每次调模型报一条 `thinking`——宿主据此在第一个字出来前显示"思考中"。
+
+    `thinking` 只报"开始了"，不报结束：展示层收到执行器任何后续动静就把那行收掉。
+    """
+    fake = ToolCallingFakeModel()
+    monkeypatch.setattr("sxagent.executor.get_model", lambda *a, **k: fake)
+    seen: list[dict[str, object]] = []
+    subscription = trace.subscribe(seen.append)
+
+    outcome = await run_task(_skill("skill-a", MARKER_A), "交接书")
+    subscription.cancel()
+
+    assert outcome.status == "completed"
+    thinking = [e for e in seen if e.get("kind") == "thinking"]
+    assert thinking, "一次模型调用都没报"
+    assert all(e.get("type") == "note" for e in thinking)
+
+
 async def test_a_runaway_round_is_cut_by_the_wall_clock(monkeypatch) -> None:
     """内层循环转不完的一趟，要在墙钟内被就地叫停 —— 实测里它跑过 20 分钟、写了 14 份产物。
 

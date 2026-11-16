@@ -188,6 +188,8 @@ KINDS = frozenset(
         "nudge",
         # executor 的工具回调（`executor_tool` = 执行器调了一次工具：起 / 止各一条）
         "executor_tool",
+        # executor 的模型回调（`thinking` = 执行器开始了一次模型调用：第一个字出来前的静默段）
+        "thinking",
         # graph.prepare / finalize
         "feed",
         "relay",

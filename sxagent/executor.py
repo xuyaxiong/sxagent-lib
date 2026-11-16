@@ -247,20 +247,24 @@ def _build_executor(
         system_prompt=_PLATFORM_RULE,
         name="executor",
     )
-    # 工具起止回调绑在图上（不经过调用时的 config —— 那边传了会让执行器变成独立根图）
-    return agent.with_config({"callbacks": [_ToolTrace()]})
+    # 工具与模型调用回调绑在图上（不经过调用时的 config —— 那边传了会让执行器变成独立根图）
+    return agent.with_config({"callbacks": [_ExecTrace()]})
 
 
-class _ToolTrace(AsyncCallbackHandler):
-    """执行器调工具 → 机制事件（`executor_tool`，起 / 止各一条）。
+class _ExecTrace(AsyncCallbackHandler):
+    """执行器调工具、调模型 → 机制事件（`executor_tool` 起 / 止各一条；`thinking` 一条）。
 
     宿主把执行器的图事件整个过滤掉（那些不是主 agent 的话），不在这里报，长任务里
-    用户看不到任何"它在动"的信号。报名字、耗时、成败；参数不进事件——写产物的参数
-    就是整篇产物、读技能文件的正文同理，展示层要的只是"调了谁、多久、成没成"。
+    用户看不到任何"它在动"的信号。工具报名字、耗时、成败（参数不进事件——写产物的
+    参数就是整篇产物、读技能文件的正文同理）；模型调用只报"开始了"一条：第一个字
+    出来前是静默段，展示层据此显示"思考中"，被后续任何动静收掉，不需要再报"结束"。
     """
 
     def __init__(self) -> None:
         self._started: dict[str, tuple[str, float]] = {}
+
+    async def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs) -> None:
+        trace.note("▶ 执行器开始调模型", kind="thinking")
 
     async def on_tool_start(self, serialized, input_str, *, run_id, **kwargs) -> None:
         name = str((serialized or {}).get("name") or kwargs.get("name") or "?")
