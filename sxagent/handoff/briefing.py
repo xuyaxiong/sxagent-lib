@@ -304,7 +304,9 @@ def absorb_outcome(rec: Task, outcome: Outcome) -> None:
 
     `artifacts` **累加**：一个任务可以交很多份产物（技能每阶段一份很常见，不区分中间与
     最终），这一趟交的不许把上一趟的顶掉 —— 顶掉了，下一趟的交接书里就"忘"了前面的。
-    其余字段照旧覆盖写。
+    累加按 id **去重保序**：本函数会被同一个 outcome 调两次（`dispatch` 先 absorb、
+    `settle` 里再 absorb 一次），不去重的话同一批产物会被记两遍，台账与交接书的
+    「已交付」清单跟着重复。其余字段照旧覆盖写。
     """
     rec["report"] = outcome.report
     # 它申报要的那条信息 —— 与 `report` 一样覆盖写：这一轮没申报就清空（它已经答上了 /
@@ -318,7 +320,7 @@ def absorb_outcome(rec: Task, outcome: Outcome) -> None:
     # 故障的"类"跟着一起落（台账据此选引导句），同样覆盖写。
     rec["fault_kind"] = outcome.fault_kind
     if outcome.artifacts:
-        rec["artifacts"] = [*(rec.get("artifacts") or []), *outcome.artifacts]
+        rec["artifacts"] = list(dict.fromkeys([*(rec.get("artifacts") or []), *outcome.artifacts]))
 
 
 #: 执行器三态 → `Task.stage`，只有这一处映射。三态是封闭枚举，所以这里穷举。
@@ -333,7 +335,7 @@ def settle(rec: Task, outcome: Outcome) -> str:
     """把一次执行结果落进 Task，状态迁移的唯一入口。
 
     先 `absorb_outcome` 再写 `stage`，顺序不能反。调用方常常已经先 absorb 过一次，这里
-    再写一遍是幂等的，换来的是"不可能漏写"。
+    再写一遍是幂等的（产物按 id 去重保序），换来的是"不可能漏写"。
     """
     absorb_outcome(rec, outcome)
     rec["stage"] = _STATUS_TO_STAGE[outcome.status]

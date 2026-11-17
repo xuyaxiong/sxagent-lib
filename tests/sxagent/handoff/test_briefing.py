@@ -127,3 +127,14 @@ async def test_artifacts_accumulate_across_runs() -> None:
     text = render_briefing(rec)
     assert "art_001" in text
     assert "art_002" in text
+
+
+async def test_absorb_is_idempotent_per_outcome() -> None:
+    """同一 outcome 被 absorb 两次（`dispatch` + `settle` 各一次）不许把产物记两遍。"""
+    rec: Task = {"id": "t1", "skill": "some-skill"}
+    outcome = ExecOutcome(artifacts=["art_001"], report="一趟")
+
+    absorb_outcome(rec, outcome)
+    absorb_outcome(rec, outcome)
+
+    assert rec["artifacts"] == ["art_001"]
