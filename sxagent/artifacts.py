@@ -316,8 +316,8 @@ def make_read_artifact(store: ArtifactStore = DEFAULT_STORE):
 def artifact_index_lines(store: ArtifactStore = DEFAULT_STORE) -> list[str]:
     """产物清单（渐进式披露第一层）：ID / 名称 / 字数 / 类型 / 梗概 / 位置，不含正文。
 
-    位置必须在这一层：主 agent 要答"东西在哪"，而它在投递重跑（`feed`）那条路上没有回执
-    （回执只属于 `delegate` 工具调用），台账的完成行又只有 ID。
+    位置必须在这一层：主 agent 要答"东西在哪"，而投回那条路跑完补的是**回执**（`graph._deliver`，
+    与 `delegate` 的回执同一套渲染），台账的完成行又只有 ID。
     放在这一层而不是台账：台账是每轮注入的索引、必须短，这里是按需的；形状和回执
     【产出的产物】一致（ID ＋ 梗概一行，位置另起一行缩进 2 格）。
 
