@@ -137,6 +137,48 @@ async def test_the_feed_path_uses_the_injected_store_and_source(monkeypatch) -> 
     assert seen["model"] is model
 
 
+async def test_the_feed_path_injects_the_result_back(monkeypatch) -> None:
+    """投回跑完的结果要补一条回执进主 agent 的流。
+
+    不补的话，它手里那条 delegate 回执停在"它在要信息"，只能按过期信息决策 ——
+    实测：照着旧回执把用户的答复再转一遍、重开一趟委派（新任务没有旧问答，执行器按
+    问询纪律又问下一条，用户侧就成了"反复请求参数"）。
+    """
+    deliveries: list[ExecOutcome] = []
+
+    async def fake_run_task(skill, briefing="", user_turns=None, **kw):
+        outcome = deliveries.pop(0)
+        return outcome
+
+    monkeypatch.setattr("sxagent.executor.run_task", fake_run_task)
+    store = _SpyStore()
+    source = LocalSkills({"哨兵技能": Skill("哨兵技能", "一句话", "哨兵指令")})
+    node = graph._make_node_feed(store, source, None)
+    state = {
+        "messages": [HumanMessage("这是答复")],
+        "answer_to": "t1",
+        "tasks": [{"id": "t1", "skill": "哨兵技能", "stage": "waiting_for_input"}],
+    }
+
+    # ① 跑完了：回执要带【投回】+ 任务号 + 产物清单
+    deliveries.append(ExecOutcome(status="completed", artifacts=["art_x"], report="干完了"))
+    out = await node(dict(state))
+    (msg,) = out["messages"]
+    assert msg.additional_kwargs["injected_by"] == "platform.feed"
+    assert "【投回】" in msg.content
+    assert "`t1`" in msg.content and "哨兵技能" in msg.content
+    assert "art_x" in msg.content
+
+    # ② 还是缺信息：同一形态，问题也一并交回去（台账那边不重印问题，靠这份）
+    deliveries.append(
+        ExecOutcome(status="waiting_for_input", asked="请给出这节课的上法")
+    )
+    out = await node(dict(state))
+    (msg,) = out["messages"]
+    assert "【投回】" in msg.content
+    assert "【它要的信息】" in msg.content and "请给出这节课的上法" in msg.content
+
+
 def test_the_relay_carries_the_question_not_the_monologue() -> None:
     """贴给用户的是它申报的那句原话（`asked`），不是它最后说的那段（`report`）。
 

@@ -241,11 +241,27 @@ def build_receipt(
     *,
     agent_answer: str = "",
     note: str = "",
+    fed: tuple[str, str] | None = None,
     store: ArtifactStore = DEFAULT_STORE,
 ) -> Receipt:
-    """执行器的结果 ＋ 处置提示 → 回执对象。各段有条件的写在这里，`HOPS` 声明的是上限。"""
+    """执行器的结果 ＋ 处置提示 → 回执对象。各段有条件的写在这里，`HOPS` 声明的是上限。
+
+    `fed` 非空 = 这条回执是投回那条路的**补录**（`(任务 id, 技能名)`）：delegate 那次调用
+    早就返回了"它在要信息"，用户答复后由平台投回、重跑、跑完 —— 结果得交回发起方，否则
+    它只能按那条过期回执决策（实测：它会照着旧回执把答复再转一遍、重开一趟委派）。
+    """
     kind = _kind_of(outcome)
     sections: dict[str, str] = {"deliver": _deliver_line(outcome, kind)}
+
+    # ⓪ 补录回执的身份与因果：说清它是"你那次委派的后半段"，旧回执以这条为准。
+    #    没有这段，主 agent 分不清这是新委派还是旧委派的续，反而多一层混乱。
+    if fed:
+        fed_tid, fed_skill = fed
+        sections["fed"] = (
+            f"这条补的是**你那次委派的后半段**：`{fed_tid}`「{fed_skill}」。\n"
+            "用户的答复**已由平台投回**该任务，这一趟就是答复后重跑的 ——"
+            "你手里那条「它在要信息」的回执，以这条为准。"
+        )
 
     # ①b 它要的信息：`ask_user` 的参数原话（结构，不是从它的话里挑出来的）。
     # 回执里必须有它：主 agent 的回复写在 `finalize` 注入问题之前 —— 不给它这一句，
@@ -294,6 +310,38 @@ def build_receipt(
         sections["fault"] = text
 
     return {"kind": kind, "sections": sections}
+
+
+def receipt_of(
+    outcome: Outcome,
+    *,
+    skill: str = "",
+    agent_answer: str = "",
+    fed: tuple[str, str] | None = None,
+    store: ArtifactStore = DEFAULT_STORE,
+) -> Receipt:
+    """一次执行结果 → 回执对象（两条路共用：`delegate` 的返回值、投回后的补录）。
+
+    「出口 → 【下一步】」的映射只在这里有一份 —— 两条路各写一份，迟早会漂。
+    试答那段只有 completed 出口回显：走 waiting 的那次试答是"没答上"的那次，摆出来是噪音。
+    """
+    if outcome.fault:
+        note = next_note(
+            "fault", fault_kind=outcome.fault_kind, delivered=len(outcome.artifacts or [])
+        )
+    elif outcome.status == "completed":
+        note = next_note("completed", skill=skill)
+    elif outcome.status == "waiting_for_input":
+        note = next_note("waiting")
+    else:
+        note = next_note("failed")
+    return build_receipt(
+        outcome,
+        agent_answer=agent_answer if outcome.status == "completed" and not outcome.fault else "",
+        note=note,
+        fed=fed,
+        store=store,
+    )
 
 
 def build_rejection(kind: str, detail: str, available: str) -> Receipt:

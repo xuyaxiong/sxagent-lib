@@ -36,6 +36,8 @@ SECTION: dict[str, str] = {
     "readable": "【可读产物】",
     "resume": "【续跑提示】",
     # ── 回执（执行器 → 主 agent，`receipt.py`）──
+    #: 补录回执才有的一段：这条回执是"用户答复被平台投回后跑完的"（你那次委派的后半段）。
+    "fed": "【投回】",
     "deliver": "【交付】",
     #: 它申报要的那句原话。塞进【交付】就混进平台的框架话里了。
     "asked": "【它要的信息】",
@@ -170,6 +172,7 @@ def bullet_lines(text: object, pad: str = BODY) -> list[str]:
 #: 谁把这条消息塞进来的，挂在 `additional_kwargs["injected_by"]` 上。
 INJECTED: dict[str, str] = {
     "platform.finalize": "平台**透传**（执行器的话，原样转达给用户 —— **不是主 agent 说的**）",
+    "platform.feed": "平台**补录的回执**（你那次委派答复投回后跑完的结果 —— **不是模型说的话**）",
 }
 
 
@@ -221,6 +224,9 @@ HOPS: dict[str, tuple[str, ...]] = {
         "resume",
     ),
     "receipt": (
+        # 【投回】只在补录那条路上有（delegate 的回执不走它）：先交代这条回执是什么，
+        # 再给结果。没给这段时 `render_hop` 直接跳过，不占位。
+        "fed",
         # `asked` 紧跟【交付】：要信息的时候，那句问题就是这条回执的主角。
         "deliver",
         "asked",

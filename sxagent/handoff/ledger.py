@@ -100,7 +100,8 @@ def render_ledger(tasks: list[Task]) -> str:
             body.append(line)
         elif t.get("stage") == "waiting_for_input":
             # 不重印问题：全文由【待答】100% 覆盖，这里重印的那份是截断的 ——
-            # 撤截断的那份、留全文那份，信息不丢；撤反了才丢（`feed` 那条路上没有回执）。
+            # 撤截断的那份、留全文那份，信息不丢；撤反了才丢（投回那条路的回执里
+            # 也带着同一句原话）。
             # 打 `asked`、不打 `report`：主 agent 需要知道的是"它在等什么"。
             # 不许点名那个段名（写死【待答】是第二份定义）—— 描述，不点名。
             q = str(t.get("asked") or "").strip()

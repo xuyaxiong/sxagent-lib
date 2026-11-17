@@ -58,9 +58,8 @@ from sxagent.handoff.decision import emit_decision  # 决策事件的发射器�
 from sxagent.handoff.receipt import (  # 回执
     NOTE_BY_FAULT,
     NOTE_FAULT_UNCLASSIFIED,
-    build_receipt,
     build_rejection,
-    next_note,
+    receipt_of,
     render_receipt,
 )
 from sxagent.llm import safe_structured
@@ -478,17 +477,18 @@ def _out(
     superseded: list[Task],
     outcome: Outcome,
     *,
+    skill: str,
     agent_answer: str = "",
-    note: str = "",
     mooted: list[Task] | None = None,
     artifacts: ArtifactStore = DEFAULT_STORE,
 ) -> Command:
     """统一的返回口，总是带上被取代的旧 Task。
 
     一次做完两件事：构造回执对象、渲染成文本。文本进 `content`（模型只看这个），对象挂
-    `additional_kwargs`（记录层读它）。
+    `additional_kwargs`（记录层读它）。「出口 → 【下一步】」的映射在 `receipt_of` 里
+    （投回那条路的补录也走它，一份映射两处用）。
     """
-    r = build_receipt(outcome, agent_answer=agent_answer, note=note, store=artifacts)
+    r = receipt_of(outcome, skill=skill, agent_answer=agent_answer, store=artifacts)
     text = render_receipt(r)
     # 交接关键日志（复盘用）：这一跳交了多少、有没有结构化对象。
     # 正文不在这里 dump：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
@@ -522,8 +522,8 @@ def _reply(
             rec,
             superseded,
             outcome,
+            skill=skill.name,
             agent_answer=answer,
-            note=next_note("completed", skill=skill.name),
             mooted=mooted,
             artifacts=artifacts,
         )
@@ -536,9 +536,7 @@ def _reply(
             f"由平台原样转给用户（不由主 agent 代问）",
             kind="waiting",
         )
-        return _out(
-            runtime, rec, superseded, outcome, note=next_note("waiting"), artifacts=artifacts
-        )
+        return _out(runtime, rec, superseded, outcome, skill=skill.name, artifacts=artifacts)
 
     # ③ 只剩 incomplete：推了 N 轮，既没交产物也没申报要信息，交给主 agent 决定。平台不猜
     #    它为什么没交（不读正文）。平台故障 ≠ 执行器干不了：故障时"推了 N 轮"是假话，
@@ -554,21 +552,12 @@ def _reply(
             kind="delegate_failed",
             fields={"fault_kind": outcome.fault_kind},
         )
-        return _out(
-            runtime,
-            rec,
-            superseded,
-            outcome,
-            note=next_note(
-                "fault", fault_kind=outcome.fault_kind, delivered=len(outcome.artifacts)
-            ),
-            artifacts=artifacts,
-        )
+        return _out(runtime, rec, superseded, outcome, skill=skill.name, artifacts=artifacts)
     trace.note(
         f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
         kind="delegate_failed",
     )
-    return _out(runtime, rec, superseded, outcome, note=next_note("failed"), artifacts=artifacts)
+    return _out(runtime, rec, superseded, outcome, skill=skill.name, artifacts=artifacts)
 
 
 def make_delegate(

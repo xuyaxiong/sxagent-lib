@@ -111,6 +111,13 @@ async def test_a_faulted_run_that_delivered_says_so() -> None:
     assert DELIVERED_DESPITE_FAULT.format(1) not in plain_sections["fault"]
 
 
+def test_delegate_receipt_has_no_feed_section() -> None:
+    """【投回】只有投回那条路的补录回执才有 —— delegate 的返回值上不许冒出这段。"""
+    r = receipt_mod.build_receipt(ExecOutcome(status="completed", artifacts=[]))
+    assert "fed" not in r["sections"]
+    assert "【投回】" not in receipt_mod.render_receipt(r)
+
+
 def test_a_run_that_never_delivered_says_it_was_nudged() -> None:
     """没交东西、却推了好几轮：交接处要如实说"推了 N 轮都没出口"，不许说成"一直在干活"。"""
     outcome = ExecOutcome(

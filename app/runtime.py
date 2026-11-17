@@ -449,6 +449,7 @@ TOOL_SOURCE: dict[str, str] = {
 
 #: 段的标签（给读日志的人看）。段名本身不在这里，从 `sxagent.handoff.SECTION` 取。
 RECEIPT_LABEL: dict[str, str] = {
+    "fed": "平台的框架话 · 这条回执是**投回后补录的**（你那次委派的后半段）",
     "deliver": "平台的框架话 · 这条回执属于哪种出口",
     "asked": "**它申报要的那句原话**（`ask_user` 的参数，未经转述）",
     "produced": "平台给的产物清单（**不含正文**）",

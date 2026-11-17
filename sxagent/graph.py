@@ -47,6 +47,7 @@ from sxagent.artifacts import DEFAULT_STORE, ArtifactStore
 from sxagent.handoff import render_hop  # 唯一那条渲染路（见 handoff/__init__）
 from sxagent.handoff.briefing import Task, asked_text
 from sxagent.handoff.ledger import render_ledger
+from sxagent.handoff.receipt import receipt_of, render_receipt
 
 # 本模块不直接调执行器：走 `agent.dispatch`，那边用属性访问 `executor.run_task`（晚绑定）。
 from sxagent.skill_pack import DEFAULT_SOURCE  # 技能来源：库自带的默认实现
@@ -115,8 +116,8 @@ async def _deliver(
     skills: SkillSource,
     model: BaseChatModel | None,
     extra_tools: Sequence[BaseTool] = (),
-) -> tuple[Task, list[str], list[Task]]:
-    """投一条待答。返回投递后的 Task、一行日志，以及被取代的旧 Task。
+) -> tuple[Task, list[str], list[Task], list[AnyMessage]]:
+    """投一条待答。返回投递后的 Task、一行日志、被取代的旧 Task，以及要补录的消息。
 
     历次答复累积在 `Task.qa` 上：执行器每次都是全新的 `run_task`，只带最新一条的话，用户
     答第二个就把第一个冲掉了。
@@ -136,7 +137,9 @@ async def _deliver(
     )
     # refs 要一起带上，否则执行器续跑时看不见前序产物。编排走 `dispatch`（两条路共用）：
     # run_task → 落账 → run_by → 试答重跑 → settle → 取代哑待答，顺序写两遍一定会漂。
-    # trigger="feed" = 这轮是平台起的，没有回执，全文不在主 agent 上下文里。
+    # trigger="feed" = 这轮是平台起的（编译器不产 tool_call）；跑完的结果由下面补录成
+    # 一条注入消息交回发起方 —— 不补的话，主 agent 手里那条 delegate 回执停在
+    # "它在要信息"，它会照着旧回执把用户的答复再转一遍、重开一趟委派（实测过）。
     outcome, answer, mooted = await dispatch(
         skill,
         rec,
@@ -162,7 +165,29 @@ async def _deliver(
         logs.append(f"feed: ⏳ {t['id']}（{t['skill']}）答复后**还是缺信息** → 仍待答")
     else:
         logs.append(f"feed: ❌ {t['id']}（{t['skill']}）答复后仍未完成 → failed")
-    return rec, logs, mooted
+
+    # 补录回执：与 delegate 那条同一套渲染（出口映射收在 `receipt_of` 里），只是多一段
+    # 【投回】把因果与归属说破；注入标记让记录层认得它不是模型说的。
+    receipt = receipt_of(
+        outcome,
+        skill=str(t.get("skill") or ""),
+        agent_answer=answer,
+        fed=(str(t["id"]), str(t.get("skill") or "")),
+        store=artifacts,
+    )
+    text = render_receipt(receipt)
+    trace.handoff(
+        "回执",
+        "执行器",
+        "主 agent",
+        text,
+        structured=f"Receipt(kind={receipt['kind']}，{len(receipt['sections'])} 段)"
+        "｜平台投回后补录（用户答复已投回并跑完）",
+    )
+    injected: list[AnyMessage] = [
+        SystemMessage(content=text, additional_kwargs={"injected_by": "platform.feed"})
+    ]
+    return rec, logs, mooted, injected
 
 
 async def _feed_waiting(
@@ -171,7 +196,7 @@ async def _feed_waiting(
     skills: SkillSource,
     model: BaseChatModel | None,
     extra_tools: Sequence[BaseTool] = (),
-) -> tuple[list[Task], list[str]]:
+) -> tuple[list[Task], list[str], list[AnyMessage]]:
     """把用户这条消息的原话投给它标明的那一个待答任务（`answer_to`）。
 
     不做任何判断——平台不替用户判断他的话算不算回答，那是语义判断，判错比多问一遍更糟。
@@ -188,22 +213,24 @@ async def _feed_waiting(
                 f"⚠️ `answer_to={target}` 指的那条**不在待答**（已被取代 / 已完成 / 不存在）"
                 f" → 不投递（当前待答 {len(all_waiting)} 条）"
             )
-        return [], []
+        return [], [], []
 
     out: list[Task] = []
+    injected: list[AnyMessage] = []
     logs = [f"feed: 定向投递 → {target}（`answer_to` 指的那条；其余待答不动）"]
     for t in waiting:
         skill = skills.get(t["skill"])
         if skill is None:
             logs.append(f"feed: ⚠️ {t['id']} 的技能「{t['skill']}」不存在，跳过")
             continue
-        rec, more, mooted = await _deliver(
+        rec, more, mooted, msgs = await _deliver(
             state, t, skill, user, artifacts, skills, model, extra_tools
         )
         logs += more
+        injected += msgs
         out.extend(mooted)
         out.append(rec)
-    return out, logs
+    return out, logs, injected
 
 
 def _make_node_feed(
@@ -219,7 +246,7 @@ def _make_node_feed(
 
         只有一条返回路径：`answer_to` / `fed_asking` 是本轮信号，多一条路就多一处可漏。
         """
-        updated, logs = await _feed_waiting(state, artifacts, skills, model, extra_tools)
+        updated, logs, injected = await _feed_waiting(state, artifacts, skills, model, extra_tools)
 
         # 投递之后执行器又问了吗 —— 判据是结构事实：投递过的那条落成了 `waiting_for_input`。
         fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
@@ -241,6 +268,9 @@ def _make_node_feed(
         )
         return {
             "tasks": updated,  # reducer 按 id 合并
+            # 补录的回执进主 agent 的消息流（投回跑完的结果得交回发起方）——
+            # reducer 是 `add_messages`；没投递就是空表，什么都不加。
+            "messages": injected,
             "log": logs,  # `feed: …` —— reducer 是 operator.add
             "actions": actions,
             # 本轮信号必须在这唯一一条返回路径上写回
