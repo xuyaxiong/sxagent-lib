@@ -438,6 +438,7 @@ RECEIPT_KINDS: dict[str, str] = {
 #: 工具返回的来源（读日志的人最需要知道的一条：这段字是谁写的）
 TOOL_SOURCE: dict[str, str] = {
     "delegate": "平台（`delegate` 的回执：**平台的框架话 + 执行器的原话**拼在一起）",
+    "ask_user": "平台（`ask_user` 的回执：问题已交给用户，答复就是下一条消息）",
     "read_skill": "平台（技能原文 —— 主 agent 主动读的，渐进式披露第二层）",
     "read_skill_file": "技能包（技能自带文件的全文 —— 渐进式披露第三层）",
     "read_artifact": "产物库（**产物正文全文**）",

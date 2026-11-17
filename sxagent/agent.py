@@ -97,7 +97,7 @@ _MAIN_PROMPT = (
     "## 信息不全时，**不要一律问** —— 先判断能不能推进\n"
     "\n"
     "- 能推进就**先推进**（真的缺东西时，执行器会告诉你）；\n"
-    "- 确实推进不了的，平台会问；你不用抢着问，也不用挤牙膏；\n"
+    "- 确实推进不了的，一次问清楚、不要挤牙膏；怎么问见「请求输入」那一节；\n"
     "- **哪些参数是必答的、哪些有默认值，以技能指令为准** —— 平台不替你猜，你也别猜。\n"
     "\n"
     "## 🔴 产出范围**以用户明确说的为准**，不要自行扩大\n"
@@ -378,6 +378,66 @@ def build_user_turns(messages: list[BaseMessage]) -> list[dict[str, object]]:
     return out
 
 
+# ──────────────────────────── 请求输入 ────────────────────────────
+
+
+def make_ask_user() -> BaseTool:
+    """造主 agent 的 `ask_user` 工具 —— 请求输入走卡片，答复就是下一条消息。
+
+    与执行器的同名工具（`executor.make_ask_user`）同参：`question` 必填、`options`
+    可选。区别只在"问出去之后"：执行器那边登记待答、答复投回重放；主 agent 这边
+    这一轮到此结束（`_StopWhenPending` 收话），答复就是用户的下一条消息 —— 两套各自
+    成立，不互相借。
+    """
+
+    @tool
+    async def ask_user(
+        question: str,
+        runtime: ToolRuntime,
+        options: list[str] | None = None,
+    ) -> Command:
+        """需要用户补信息或做选择时**优先用它** —— 问题会以卡片展示，答复是他的下一条消息。
+
+        一次把问题问清；有明确的候选就放进 `options`（用户点一下就答了），不要把候选
+        写进 `question` 那句话里再让人抠。调用后这一轮到此结束，你收到用户答复后接着做。
+
+        Args:
+            question: 具体、能直接回答的一句话。
+            options: 有明确候选才给；确实没有就省略，用户自由回答。
+        """
+        q = str(question or "").strip()
+        if not q:
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content="❌ question 不能为空：把要问用户的话写清楚再调用。",
+                            tool_call_id=runtime.tool_call_id,
+                        )
+                    ]
+                }
+            )
+        opts = [str(o).strip() for o in (options or []) if str(o).strip()]
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content=(
+                            "**已把问题提交给用户**（卡片展示）—— 本轮到此结束。"
+                            "用户的答复就是他的下一条消息，你收到后接着做。"
+                        ),
+                        tool_call_id=runtime.tool_call_id,
+                        # 提问对象跟着消息走（记录层与宿主读它，不解析文案）：
+                        # 库的 `_StopWhenPending` 按它收话，宿主轮末按它出卡片事件。
+                        additional_kwargs={"ask": {"question": q, "options": opts}},
+                    )
+                ]
+            }
+        )
+
+    return ask_user
+
+
 # ──────────────────────────── 委派 ────────────────────────────
 
 
@@ -647,14 +707,18 @@ def _tools_for(
     return {
         "auto": [
             make_delegate(store, source, model, extra_tools),
+            make_ask_user(),
             make_write_artifact(store=store),
             make_read_artifact(store),
             make_list_artifacts(store),
             make_read_skill(source),
             make_read_skill_file(source),
         ],
+        # delegate 档不给 `ask_user`（2026-11-16 拍）：信息渠道保持单一，全走执行器申报、
+        # 平台贴；未来可能调整 —— 委派之前的意图澄清执行器兜不了。
         "delegate": [make_delegate(store, source, model, extra_tools), make_list_artifacts(store)],
         "inline": [
+            make_ask_user(),
             make_write_artifact(store=store),
             make_read_artifact(store),
             make_list_artifacts(store),
@@ -677,6 +741,17 @@ def tool_names() -> set[str]:
     }
 
 
+#: 手边有 `ask_user` 时补一段「请求输入」的做法 —— 拼装时按**工具表里有没有它**决定，
+#: 不按档位名写死：话与手边的工具一致，加档位时不用回来改这里。
+_ASK_NOTE: str = (
+    "\n\n## 请求输入走 `ask_user`\n\n"
+    "需要用户补信息或做选择时（尤其委派之前的意图澄清），**优先用 `ask_user`** —— "
+    "问题会以卡片展示，用户的答复就是他的**下一条消息**，你收到后接着做。\n"
+    "有明确的候选就把它们放进 `options`（用户点一下就答了）；一次把问题问清，不要挤牙膏。\n"
+    "已经委派出去的活，如果执行器要信息，平台会把问题原文贴给用户（见 `delegate` 回执）"
+    "—— 那时不用你问、也不要重复问。\n"
+)
+
 #: 非默认模式下往系统提示里补一句 —— 工具集变了，得让它知道为什么。
 _MODE_NOTE: dict[str, str] = {
     "delegate": (
@@ -691,12 +766,13 @@ _MODE_NOTE: dict[str, str] = {
 
 
 class _StopWhenPending(AgentMiddleware):
-    """执行器一申报待答，主 agent 这一拍就不生成 —— "待答时复述问题"的解法。
+    """平台要把一条问题贴给用户了（执行器待答 / 主 agent 的 `ask_user`），主 agent 这一拍就不生成。
 
     那一刻要决定的是「结果回给执行器，还是问用户」，不是对话轮次；ReAct 的默认规则
     "工具返回了 → 再生成一拍"把它当普通轮次，于是它只能复述问题。正解不是拦住输出，
     是让那一拍不发生：中间件在模型调用之前就跳走（不是生成完再压住）。
-    触发条件是结构事实：读回执的 `handoff.kind`，只有 `"waiting"` 才停，其余照常发言。
+    触发条件是结构事实：读回执的 `handoff.kind` 或提问标记 `ask`，只有它们是"要问出去"
+    才停，其余照常发言。
     """
 
     @hook_config(can_jump_to=["end"])
@@ -706,19 +782,23 @@ class _StopWhenPending(AgentMiddleware):
 
         两种形状都要认，少认一种就是"拦一半"：
 
-        形状一「本批回执」：主 agent 自己调的 `delegate`。要看整批，不能只看最后一条 ——
-        模型会并行调工具，把 `delegate` 和 `read_skill` 放在同一条消息里时，待答回执不排在
-        最后，只看末尾那条会让机制静默失效。"这一批" = 末尾连续的那串 `ToolMessage`。
+        形状一「本批工具结果」：主 agent 自己调的 `delegate`（待答回执）或 `ask_user`
+        （请求输入标记）。要看整批，不能只看最后一条 —— 模型会并行调工具，把 `delegate`
+        和 `read_skill` 放在同一条消息里时，待答回执不排在最后，只看末尾那条会让机制
+        静默失效。"这一批" = 末尾连续的那串 `ToolMessage`。
 
         形状二「投递后又问」（`state["fed_asking"]`）：这条路上根本没有 `delegate` 调用，
         消息末尾是 `HumanMessage`，上面那轮扫描扫不到任何工具返回。事实由平台写在
         `AgentState.fed_asking` 上（本轮信号，每轮重写）。
         """
-        # ── 形状一：本批回执 ──
+        # ── 形状一：本批工具结果 ──
         for m in reversed(state.get("messages") or []):
             if not isinstance(m, ToolMessage):
                 break
-            handoff = (m.additional_kwargs or {}).get("handoff") or {}
+            kwargs = m.additional_kwargs or {}
+            if kwargs.get("ask"):
+                return self._stop("这批工具返回里有提问（ask_user）")
+            handoff = kwargs.get("handoff") or {}
             if handoff.get("kind") == "waiting":
                 return self._stop("这批工具返回里有待答回执")
         # ── 形状二：投递后又问 ──
@@ -763,11 +843,15 @@ def build_agent(
     exec_path = validate_exec_path(exec_path)
     tools = [*_tools_for(exec_path, artifacts, skills, model, extra_tools), *extra_tools]
     check_unique_tool_names(tools)
+    # 「请求输入」那段话跟着工具走：手边有 `ask_user` 才补，没有就不提（别人写的提示词
+    # 若教用户加档位，这里不用回来改）。
+    ask_note = _ASK_NOTE if any(t.name == "ask_user" for t in tools) else ""
     return create_agent(
         model or get_model(),
         tools=tools,
         system_prompt=_MAIN_PROMPT
         + _MODE_NOTE.get(exec_path, "")
+        + ask_note
         + "\n\n可用技能：\n"
         + render_catalog(skills.values())
         + (f"\n\n{system_prompt}" if system_prompt else ""),

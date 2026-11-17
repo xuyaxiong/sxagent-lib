@@ -19,7 +19,11 @@ def _names(exec_path: str) -> set[str]:
 
 
 def test_delegate_path_keeps_only_delegation_tools() -> None:
-    """`delegate` 档拿掉原料：技能原文与产物写入工具都不在，只剩委派那条路。"""
+    """`delegate` 档拿掉原料：技能原文与产物写入工具都不在，只剩委派那条路。
+
+    `ask_user` 也不给（2026-11-16 拍）：信息渠道全走执行器申报、平台贴 —— 这里是
+    精确集合断言，将来要给 delegate 档补上，先改这条。
+    """
     assert _names("delegate") == {"delegate", "list_artifacts"}
 
 
@@ -27,7 +31,14 @@ def test_inline_path_has_no_delegate_tool() -> None:
     """`inline` 档是全硬的：`delegate` 工具根本不存在；亲自执行要用的都在。"""
     names = _names("inline")
     assert "delegate" not in names
-    need = {"read_skill", "read_skill_file", "write_artifact", "read_artifact", "list_artifacts"}
+    need = {
+        "read_skill",
+        "read_skill_file",
+        "write_artifact",
+        "read_artifact",
+        "list_artifacts",
+        "ask_user",
+    }
     assert need <= names, f"inline 档缺工具：{need - names}"
 
 
