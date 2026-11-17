@@ -115,6 +115,46 @@ def test_declared_type_is_taken_as_the_extension() -> None:
     assert file_ext("htm") == ".html"
 
 
+class _FailingStore(MemoryArtifacts):
+    """落库必失败的产物库 —— 测"交付失败不掀桌"这条。"""
+
+    async def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
+        raise ValueError("产物正文不能为空")
+
+
+async def test_failed_delivery_returns_to_the_model_instead_of_crashing(
+    monkeypatch,
+) -> None:
+    """落地失败不掀桌：包成带 `tool_error` 标记的错误结果回给模型，模型看得到、整轮照走。
+
+    掀桌版本（实测过）：异常直接冒出 `astream_events`、消息里没有 ToolMessage、
+    模型连重试的机会都没有 —— 交付失败的"对模型可见"就成了假话。
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from sxagent import graph
+    from tests.fakes import ToolCallingFakeModel
+
+    fake = ToolCallingFakeModel()
+    monkeypatch.setattr("sxagent.agent.get_model", lambda *a, **k: fake)
+    app = graph.build(artifacts=_FailingStore())
+    config = {"configurable": {"thread_id": "test-write-fail"}}
+
+    await app.ainvoke({"messages": [HumanMessage("哨兵-A 的问题")]}, config)
+
+    msgs = app.get_state(config).values["messages"]
+    errored = [
+        m
+        for m in msgs
+        if isinstance(m, ToolMessage) and (m.additional_kwargs or {}).get("tool_error")
+    ]
+    assert errored, "交付失败没有以带标记的错误结果回到消息里"
+    assert "交付失败" in str(errored[0].content)
+    assert errored[0].tool_call_id, "错误结果的 tool_call_id 丢了（runtime 没注入？）"
+    # 模型被再叫了一次（看到错误结果后收尾）—— 那一轮没有崩
+    assert isinstance(msgs[-1], AIMessage) and "收尾" in str(msgs[-1].content)
+
+
 def test_unusable_type_falls_back_to_md() -> None:
     """说不像个扩展名的就落 md 兜底 —— 不报错：产物已经做出来了，存不下比存错更糟。"""
     from sxagent.artifacts import file_ext

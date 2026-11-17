@@ -276,7 +276,10 @@ class _ExecTrace(AsyncCallbackHandler):
         )
 
     async def on_tool_end(self, output, *, run_id, **kwargs) -> None:
-        self._finish(str(run_id), ok=True)
+        # 工具自报的失败（如 `write_artifact` 把落地错误包成带 `tool_error` 标记的结果）
+        # 不算异常，但成败要如实 —— 执行器工具行据此显示 ❌。
+        marked = (getattr(output, "additional_kwargs", None) or {}).get("tool_error")
+        self._finish(str(run_id), ok=not marked)
 
     async def on_tool_error(self, error, *, run_id, **kwargs) -> None:
         self._finish(str(run_id), ok=False)

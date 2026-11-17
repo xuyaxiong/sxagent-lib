@@ -16,7 +16,9 @@
 5. 落盘目录只能走 `use_dir()`，直接赋值写错模块不会当场报错。
 6. 表、落盘目录两样都挂会话上，不挂模块级。`write_artifact` 按 run 记账靠闭包
    `created`，不靠事后扫消息文本猜。
-7. 工具返回的标题不用 `【…】`：那是段名的专用符号，记录层靠"独占行首"切分。"""
+7. 工具返回的标题不用 `【…】`：那是段名的专用符号，记录层靠"独占行首"切分。
+8. `write_artifact` 落地失败**不掀桌**：包成错误结果回给模型（`additional_kwargs.tool_error`
+   标记 + `status="error"`），模型可修正后重交；宿主与执行器按标记判成败，不解析文案。"""
 
 from __future__ import annotations
 
@@ -25,7 +27,9 @@ import uuid
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
+from langchain_core.messages import ToolMessage
+from langgraph.types import Command
 
 from sxagent import session, trace
 
@@ -240,8 +244,17 @@ def make_write_artifact(created: list[str] | None = None, store: ArtifactStore =
     """
 
     @tool
-    async def write_artifact(title: str, summary: str, file_type: str, content: str) -> str:
+    async def write_artifact(
+        title: str,
+        summary: str,
+        file_type: str,
+        content: str,
+        runtime: ToolRuntime | None = None,
+    ) -> str | Command:
         """把一份**产物**写进产物库。正文不会再回到主 agent 的上下文，只返回产物 ID。
+
+        落地失败（库拒绝 / 存储故障）会以错误结果**回到你这里**，不会中断这一轮 ——
+        看清错在哪、修正后重新调用即可。
 
         Args:
             title: 产物名。
@@ -252,7 +265,26 @@ def make_write_artifact(created: list[str] | None = None, store: ArtifactStore =
                 说 md 就存 `.md`，说 csv 就存 `.csv`；认不出的按 `md` 存。
             content: 产物正文全文。
         """
-        aid = await _store_into(store, title, summary, file_type, content)
+        try:
+            aid = await _store_into(store, title, summary, file_type, content)
+        except Exception as e:
+            # 失败不掀桌（掀桌=整轮崩、模型连重试的机会都没有）：包成错误结果回给模型。
+            # `tool_error` 是结构标记 —— 宿主与执行器按它判成败，不解析这句文案。
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=(
+                                f"❌ 交付失败：{e}\n"
+                                "（问题修好后可以重新调用 `write_artifact` 交付。）"
+                            ),
+                            tool_call_id=getattr(runtime, "tool_call_id", ""),
+                            additional_kwargs={"tool_error": {"reason": str(e)}},
+                            status="error",
+                        )
+                    ]
+                }
+            )
         if created is not None:
             created.append(aid)
         a = store.get(aid) or {}
