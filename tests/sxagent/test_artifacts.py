@@ -91,14 +91,20 @@ async def test_ids_are_unique_across_requests() -> None:
 
     store = _DurableStore()
     created: list[str] = []
+
+    def _call(title: str, content: str, call_id: str) -> dict[str, object]:
+        # 带 InjectedToolCallId 的工具直调要用完整 ToolCall 形态（langchain 的硬要求）
+        return {
+            "name": "write_artifact",
+            "args": {"title": title, "summary": "梗概", "file_type": "md", "content": content},
+            "type": "tool_call",
+            "id": call_id,
+        }
+
     with session.session("conv-1"):
-        await make_write_artifact(created, store=store).ainvoke(
-            {"title": "第一份", "summary": "梗概", "file_type": "md", "content": "正文一"}
-        )
+        await make_write_artifact(created, store=store).ainvoke(_call("第一份", "正文一", "call-t1"))
     with session.session("conv-1"):  # 第二个请求：新会话对象，同一个产物库
-        await make_write_artifact(created, store=store).ainvoke(
-            {"title": "第二份", "summary": "梗概", "file_type": "md", "content": "正文二"}
-        )
+        await make_write_artifact(created, store=store).ainvoke(_call("第二份", "正文二", "call-t2"))
 
     assert len(set(created)) == 2
     assert all(re.fullmatch(r"art_[0-9a-f]{8}", aid) for aid in created)

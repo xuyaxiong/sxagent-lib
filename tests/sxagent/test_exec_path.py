@@ -53,6 +53,17 @@ def test_every_non_default_mode_has_a_prompt_note() -> None:
     assert all(_MODE_NOTE[mode] for mode in _MODE_NOTE)
 
 
+def test_every_main_agent_tool_converts_to_openai_schema() -> None:
+    """主 agent 的每个工具都要能生成 OpenAI 工具模式 —— 真模型的 `bind_tools` 走这条路，
+    假模型不走（它直接返回自己），所以得挨个过一遍：`ToolRuntime | None` 这种写法就在这
+    炸过（Cannot generate a JsonSchema），单测全绿、真会话一开就 error。"""
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    for mode in EXEC_PATHS:
+        for tool in _tools_for(mode, DEFAULT_STORE, DEFAULT_SOURCE, None):
+            convert_to_openai_tool(tool)
+
+
 def test_unknown_exec_path_is_rejected_with_the_legal_values() -> None:
     """非法值当场报错、报错里带合法值 —— 不再炸成看不出哪错了的 KeyError。"""
     with pytest.raises(ValueError) as err:

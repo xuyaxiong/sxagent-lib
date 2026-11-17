@@ -25,10 +25,11 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Annotated, Protocol, runtime_checkable
 
-from langchain.tools import ToolRuntime, tool
+from langchain.tools import tool
 from langchain_core.messages import ToolMessage
+from langchain_core.tools import InjectedToolCallId
 from langgraph.types import Command
 
 from sxagent import session, trace
@@ -249,7 +250,7 @@ def make_write_artifact(created: list[str] | None = None, store: ArtifactStore =
         summary: str,
         file_type: str,
         content: str,
-        runtime: ToolRuntime | None = None,
+        tool_call_id: Annotated[str, InjectedToolCallId] = "",
     ) -> str | Command:
         """把一份**产物**写进产物库。正文不会再回到主 agent 的上下文，只返回产物 ID。
 
@@ -278,7 +279,7 @@ def make_write_artifact(created: list[str] | None = None, store: ArtifactStore =
                                 f"❌ 交付失败：{e}\n"
                                 "（问题修好后可以重新调用 `write_artifact` 交付。）"
                             ),
-                            tool_call_id=getattr(runtime, "tool_call_id", ""),
+                            tool_call_id=tool_call_id or "",
                             additional_kwargs={"tool_error": {"reason": str(e)}},
                             status="error",
                         )
