@@ -209,6 +209,8 @@ async def test_tool_calls_report_start_and_end(monkeypatch) -> None:
     assert [e["tool"] for e in ends] == ["write_artifact"], "起止要成对，止只报一次"
     assert ends[0]["ok"] is True
     assert isinstance(ends[0]["elapsed_s"], float)
+    # 起止带同一个调用号（模型给的 tool_call_id，拿不到则 run_id）：并行同名调用分得清
+    assert starts[0]["call_id"] == ends[0]["call_id"]
 
 
 async def test_model_calls_report_a_thinking_event(monkeypatch) -> None:

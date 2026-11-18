@@ -256,24 +256,30 @@ class _ExecTrace(AsyncCallbackHandler):
     """执行器调工具、调模型 → 机制事件（`executor_tool` 起 / 止各一条；`thinking` 一条）。
 
     宿主把执行器的图事件整个过滤掉（那些不是主 agent 的话），不在这里报，长任务里
-    用户看不到任何"它在动"的信号。工具报名字、耗时、成败（参数不进事件——写产物的
-    参数就是整篇产物、读技能文件的正文同理）；模型调用只报"开始了"一条：第一个字
-    出来前是静默段，展示层据此显示"思考中"，被后续任何动静收掉，不需要再报"结束"。
+    用户看不到任何"它在动"的信号。工具报名字、调用号、耗时、成败（参数不进事件——
+    写产物的参数就是整篇产物、读技能文件的正文同理）；模型调用只报"开始了"一条：
+    第一个字出来前是静默段，展示层据此显示"思考中"，被后续任何动静收掉，不需要再报"结束"。
+
+    `call_id` 是模型给的 tool_call_id（回调 kwargs 带），与主 agent 侧同源；起端存下、
+    止端带出——并行同名调用靠它分得清，跨主/执行器两侧也能对上同一次调用。
     """
 
     def __init__(self) -> None:
-        self._started: dict[str, tuple[str, float]] = {}
+        self._started: dict[str, tuple[str, float, str]] = {}
 
     async def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs) -> None:
         trace.note("▶ 执行器开始调模型", kind="thinking")
 
     async def on_tool_start(self, serialized, input_str, *, run_id, **kwargs) -> None:
         name = str((serialized or {}).get("name") or kwargs.get("name") or "?")
-        self._started[str(run_id)] = (name, time.monotonic())
+        # 止端拿不到 tool_call_id（回调不重复给），所以起端存下；拿不到时退回 run_id ——
+        # 两端一致的唯一身份，配起止效果一样。
+        call_id = str(kwargs.get("tool_call_id") or run_id)
+        self._started[str(run_id)] = (name, time.monotonic(), call_id)
         trace.note(
             f"▶ 执行器调 `{name}`",
             kind="executor_tool",
-            fields={"tool": name, "state": "start"},
+            fields={"tool": name, "state": "start", "call_id": call_id},
         )
 
     async def on_tool_end(self, output, *, run_id, **kwargs) -> None:
@@ -289,13 +295,19 @@ class _ExecTrace(AsyncCallbackHandler):
         rec = self._started.pop(run_id, None)
         if rec is None:
             return  # 错误路径 error / end 会各触发一次，止只报一次
-        name, t0 = rec
+        name, t0, call_id = rec
         elapsed = time.monotonic() - t0
         icon = "✅" if ok else "❌"
         trace.note(
             f"{icon} `{name}`（{elapsed:.1f}s）",
             kind="executor_tool",
-            fields={"tool": name, "state": "end", "ok": ok, "elapsed_s": round(elapsed, 1)},
+            fields={
+                "tool": name,
+                "state": "end",
+                "ok": ok,
+                "elapsed_s": round(elapsed, 1),
+                "call_id": call_id,
+            },
         )
 
 
