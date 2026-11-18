@@ -13,7 +13,9 @@
    本模块不许 import `sxagent.handoff.*`。
 3. 记录器不是订阅者：`_publish` 先调它、再送订阅者。展示层坏了最多看不见，记录层丢一条就是
    权威记录破洞，所以它单独兜、兜住后把洞标出来。它是槽位，本模块不 import 它。
-4. 日志是原始记录：不截断、不收回已经流出去的字。嫌吵就在播报层砍。
+4. 日志是原始记录：**事实**不截断、不收回已经流出去的字，嫌吵在播报层砍；但**正文**
+   默认不进日志 —— 只记标识与字数（正文另有持久化出处的：技能包、产物库、消息表），
+   要看全文置 `SXAGENT_LOG_PROMPT=1`。切了必须标（标记写在行里，见 `_content_for_log`）。
 5. `dump` 带的是消息对象本身，`tool_call_id` 就在里面。配对与来源标注全走结构。"""
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sxagent import session
+from sxagent import config, session
 
 if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
     from langchain_core.messages import BaseMessage
@@ -375,11 +377,26 @@ def tool_calls_of(messages: list[BaseMessage]) -> list[tuple[str, str]]:
     return out
 
 
-def render_message(m: BaseMessage) -> str:
-    """把一条 LangChain 消息渲染成可读文本（记录器落盘用）。这里不截断。
+#: 正文进日志的长度上限：短于它整段记（小内容没有膨胀问题，读的人也用得上）；
+#: 超过只记开头 —— 技能指令 / 参考文件 / 产物正文这类都能从持久化数据（技能包 / 产物库）
+#: 查回，全文进日志只会把日志撑爆（实测：一个技能会话的日志里约四成是这类全文，
+#: 最长一行 7247 字）。要看全文置 `SXAGENT_LOG_PROMPT=1`，与 PROMPT 同一个开关。
+_LOG_CONTENT_HEAD = 200
 
-    日志是原始记录，"平台注入了什么、agent 说了什么"是优化的唯一观察窗口。AI 的话只写
-    头部，正文已由 `stream_agent` 逐行流过。
+
+def _content_for_log(content: str) -> str:
+    """正文进日志的渲染：只记标识与字数。切了必须标（标记写在行里：全文多少字、开关在哪）。"""
+    if config.log_prompt_verbatim() or len(content) <= _LOG_CONTENT_HEAD:
+        return repr(content)  # `!r` 只为压成一行（日志一行一条），不是为了截断
+    head = " ".join(content.split())[:_LOG_CONTENT_HEAD]
+    return f"{head!r} …（正文共 {len(content)} 字，要看全文置 `SXAGENT_LOG_PROMPT=1`）"
+
+
+def render_message(m: BaseMessage) -> str:
+    """把一条 LangChain 消息渲染成可读文本（记录器落盘用）。
+
+    **只记标识与字数，不记正文**（2026-11-18 定）：正文默认只记开头 `_LOG_CONTENT_HEAD` 字；
+    AI 的话只写头部，正文已由 `stream_agent` 逐行流过。
     """
     kind = type(m).__name__
     content = str(m.content)
@@ -390,8 +407,7 @@ def render_message(m: BaseMessage) -> str:
     if tag:
         parts.append(f"    injected_by={tag}")
     if content.strip() and kind != "AIMessage":
-        # `!r` 只为压成一行（日志一行一条），不是为了截断。
-        parts.append(f"    content={content!r}")
+        parts.append(f"    content={_content_for_log(content)}")
     for c in getattr(m, "tool_calls", None) or []:
         parts.append(f"    tool_call={c.get('name')} args={brief_args(c.get('args') or {})}")
     return "\n".join(parts)

@@ -22,6 +22,10 @@ ROOTS = ("sxagent", "app", "scripts")
 EXEMPT: dict[tuple[str, str], str] = {
     # 标了：切了会报 `trace.cut`，文本里也带「平台截断」标记
     (
+        "sxagent/trace.py",
+        '" ".join(content.split())[:_LOG_CONTENT_HEAD]',
+    ): "日志里的消息正文：短内容整段记、长内容只记开头；截断的标记写在行里（全文多少字 + `SXAGENT_LOG_PROMPT=1` 开关）",
+    (
         "sxagent/handoff/ledger.py",
         "text[:limit]",
     ): "台账里的长文本：报了 `trace.cut`，文本里带「平台截断」标记",

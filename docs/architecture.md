@@ -176,3 +176,8 @@ delegate 建 Task → running ─┬─ completed（交了产物）
 
 `trace` 是事件总线。记录器和展示层各自渲染事件，谁也不去读对方渲染出来的东西。
 "不许把渲染出来的文本反解析回结构"是全局判据，改这块之前先过一遍。
+
+**日志只记标识与字数，不记正文**（见 `principles.md`）：消息正文默认只记开头与字数
+（`trace.render_message` 的 `_content_for_log`），全文要看置 `SXAGENT_LOG_PROMPT=1`；
+CLI 的轮次记录（`app/runtime.py:_render_tool`）对三个读工具早就只记"读了啥、多少字、
+原文在哪"——两处同一口径。
