@@ -224,14 +224,22 @@ def _check_kind(kind: str, where: str) -> str:
     return kind
 
 
-def section(title: str, kind: str = "") -> None:
+def section(title: str, kind: str = "", *, fields: Mapping[str, object] | None = None) -> None:
     """一个段落头（前后两道 `═══` 包着标题）。
 
     `kind` 是业务语义标签（受控词汇，见 `KINDS`），展示层按它归角色；不给就是纯记录、不上屏。
+    `fields` 是给订阅者的结构化补充（如 `run_begin` 的 run_id / skill）：记录器只渲染
+    `title`、不看它——宿主按结构字段写自己的行，不反解析标题。
     """
-    _publish(
-        {"type": "section", "kind": _check_kind(kind, "section"), "title": title, "ts": stamp()}
-    )
+    ev: dict[str, object] = {
+        "type": "section",
+        "kind": _check_kind(kind, "section"),
+        "title": title,
+        "ts": stamp(),
+    }
+    if fields:
+        ev.update(fields)
+    _publish(ev)
 
 
 def note(

@@ -328,7 +328,9 @@ def _open_run(
 
     run_id = f"R{next(_RUN_SEQ):02d}"
     trace.section(
-        f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）", kind="run_begin"
+        f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）",
+        kind="run_begin",
+        fields={"run_id": run_id, "skill": skill.name},
     )
     # 技能指令按名引用、不逐字复述：原文是静态资产、另有落盘文件，日志留的是交接内容。
     trace.handoff("交接书", "平台", "执行器", briefing_text, structured="Task → render_briefing")
@@ -373,7 +375,11 @@ def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str
     outcome.artifacts = list(run.created)
     # 分类是结构（`transient` / `rejected` / `timeout`）：展示层要按它决定话术与重试，
     # 不该去解析那句中文。
-    trace.note(note, kind="run_fault", fields={"fault_kind": kind})
+    trace.note(
+        note,
+        kind="run_fault",
+        fields={"fault_kind": kind, "fault": fault, "rounds": rounds},
+    )
 
 
 async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None:
@@ -523,6 +529,16 @@ def _close_run(run: _Run) -> ExecOutcome:
     # 这行是「这次 run 的账」，不是复述：两个编号各自带名字，问题不重贴（上面已有三处）。
     # 故障那档的说法按 `fault_kind` 取（表在模块里，守卫盯着键集合）。
     _fault_label = FAULT_LABEL.get(outcome.fault_kind, FAULT_LABEL["transient"])
+    end_fields: dict[str, object] = {
+        "run_id": run.run_id,
+        "skill": run.skill.name,
+        "status": outcome.status,
+        "rounds": outcome.rounds,
+        "artifacts": len(outcome.artifacts),
+        "wall_s": round(outcome.wall_s, 1),
+    }
+    if outcome.fault_kind:
+        end_fields["fault_kind"] = outcome.fault_kind
     trace.note(
         f"{run.run_id} · {run.skill.name} **结束**：status={outcome.status}"
         f"（内部 {outcome.rounds} 轮，产物 {len(outcome.artifacts)} 个，"
@@ -530,6 +546,7 @@ def _close_run(run: _Run) -> ExecOutcome:
         + ("｜它要的那句见上面 `ask_user`" if outcome.asked else "")
         + (f"｜**{_fault_label}**：{outcome.fault}" if outcome.fault else ""),
         kind="run_end",
+        fields=end_fields,
     )
     return outcome
 

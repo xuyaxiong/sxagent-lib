@@ -68,6 +68,7 @@ async def _stream_with_retry(graph, state, config, who: str, role: str):
                 f"⚠️ {who} 这一轮**基础设施抖动**（{type(e).__name__}: {e}）"
                 "—— 这就重试一次（上面流出去的那半段作废）",
                 kind="retry",
+                fields={"who": who, "error": f"{type(e).__name__}: {e}"},
             )
 
 
@@ -139,8 +140,12 @@ async def _stream_agent(graph, state, config, who: str, role: str):
             f"（这一段已 {now - reported_at:.0f}s）",
             kind="writing",
             # 工具名走结构：展示层要把它和后面那条工具回调（executor_tool）对上，
-            # 不许从这句话的反引号里抠。
-            fields={"tool": tool_name},
+            # 不许从这句话的反引号里抠；字数与这段耗时同理，宿主按字段写自己的行。
+            fields={
+                "tool": tool_name,
+                "arg_chars": arg_chars,
+                "elapsed_s": round(now - reported_at, 1),
+            },
         )
         reported_chars, reported_at = arg_chars, now
 
