@@ -53,3 +53,11 @@ testpaths = ["tests"]
 # 这套代码里 async 是常态（图节点、工具都是 async），不为每个用例挂 marker
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+# 私有制品库（阿里云云效，sx-internal）
+# 凭证不进本文件：发布时用 UV_PUBLISH_USERNAME / UV_PUBLISH_PASSWORD 环境变量
+# 注意：云效索引 URL 不带 /simple/ 后缀，index 根即仓库地址，uv/pip 自动拼 <包名>/
+[[tool.uv.index]]
+name = "aliyun-sx-internal"
+url = "https://packages.aliyun.com/5fa4eee0e6f9d07f148511ec/pypi/sx-internal/"
+publish-url = "https://packages.aliyun.com/5fa4eee0e6f9d07f148511ec/pypi/sx-internal/legacy/"
