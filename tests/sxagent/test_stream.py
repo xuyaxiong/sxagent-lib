@@ -77,8 +77,56 @@ async def test_writing_progress_only_reports_write_artifact() -> None:
     assert len(events) == 1, events
     assert events[0]["tool"] == "write_artifact", "工具名要走结构字段，展示层不解析文案"
     assert "已收到 500 字" in str(events[0]["text"])
-    # 时间是"写这个产物的累计"（零点=这一趟开始），走结构字段给展示层
+    # 时间是"这一笔写入的累计"（起点与字数同一个消息，走结构字段给展示层）
     assert isinstance(events[0]["written_s"], float)
     # 谁在写也走结构字段：主 agent 自己写产物时也发这条，宿主该照它写主语，
     # 不许默认"执行器"（实测主 agent 兜底写产物被宿主标成了执行器）
     assert events[0]["who"] == "哨兵"
+
+
+class _FakeClock:
+    """手拨时钟：替换 sxagent.stream 的 time，掐住"已写"的读数。"""
+
+    now = 0.0
+
+    @classmethod
+    def monotonic(cls) -> float:
+        return cls.now
+
+
+def _id_chunk(msg_id: str, tool: str, size: int) -> AIMessageChunk:
+    """带消息 id 的参数 chunk——消息 id 是（字数与时间的）归零边界。"""
+    return AIMessageChunk(
+        content="",
+        id=msg_id,
+        tool_call_chunks=[{"name": tool, "args": "x" * size, "id": "c1", "index": 0}],
+    )
+
+
+async def test_writing_seconds_restart_with_each_message(monkeypatch) -> None:
+    """ "已写"与字数同一个起点：换消息（新一笔写入）时时间也归零。
+
+    实测踩到：执行器一轮里写之前的读文件、取题、思考被算进"已写"，
+    "已收到 5953 字"标成已写 3m20s（其中约 2m29s 是写之前）。
+    """
+    monkeypatch.setattr("sxagent.stream.time", _FakeClock)
+
+    class _TwoMessageGraph:
+        async def astream(self, state, config, stream_mode=None):
+            _FakeClock.now = 100.0
+            yield "messages", (_id_chunk("m1", "write_artifact", 500), {"langgraph_node": "model"})
+            _FakeClock.now = 130.0
+            yield "messages", (_id_chunk("m2", "write_artifact", 300), {"langgraph_node": "model"})
+
+    seen: list[dict[str, object]] = []
+    subscription = trace.subscribe(seen.append)
+    try:
+        async for _ in _stream_agent(_TwoMessageGraph(), {}, None, "哨兵", trace.AGENT):
+            pass
+    finally:
+        subscription.cancel()
+
+    events = [e for e in seen if e.get("kind") == "writing"]
+    assert len(events) == 2, events
+    assert events[0]["written_s"] == 100.0, "第一条消息：从它自己的起点算"
+    assert events[1]["written_s"] == 0.0, "换了消息就重新起算——不是 130（整趟累计的旧行为）"

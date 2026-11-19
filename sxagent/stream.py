@@ -107,7 +107,9 @@ async def _stream_agent(graph, state, config, who: str, role: str):
     tool_name = ""
     arg_chars = 0
     reported_chars = 0
-    #: 这一趟开始的时间：心跳里的"已写"按它算累计（不随每次报告回跳）
+    #: 当前这条消息开始的时间：心跳的"已写"按它算——与字数同一个起点（换消息时一起归零）。
+    #: 不从"这一趟"起算：一轮里写之前的读文件/取题/思考会算进"已写"，和同句的字数对不上
+    #: （实测踩到：5953 字标成已写 3m20s，其中约 2m29s 是写之前）。
     started_at = time.monotonic()
     reported_at = started_at
 
@@ -176,11 +178,12 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                     buf = ""
                     # 换了消息，进度计数也得归零：不归零的话，工具跑完、模型接着说时
                     # arg_chars 还在涨，屏幕上会把"已收到 3346 字"排在产物落盘那行后面。
-                    # 计数是这一条消息的，不是这一趟的。
+                    # 计数是这一条消息的，不是这一趟的；时间起点与它一起归零，字和秒同窗。
                     tool_name = ""
                     arg_chars = 0
                     reported_chars = 0
                     reported_at = time.monotonic()
+                    started_at = reported_at
                 if cid:
                     cur_id = cid
 
