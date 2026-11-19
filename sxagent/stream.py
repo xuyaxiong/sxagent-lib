@@ -82,22 +82,31 @@ _WRITE_REPORT_EVERY = 300  # 之后每多这么多字报一次
 _WRITE_REPORT_EVERY_S = 8  # 或者每这么久报一次（字少但很慢时）
 
 
-def _tool_arg_delta(chunk) -> tuple[str, int]:
-    """这一片 chunk 里的工具参数增量，返回 `(工具名, 新增字数)`。
+def _tool_arg_delta(chunk) -> tuple[str, int, str]:
+    """这一片 chunk 里的工具参数增量，返回 `(工具名, 新增字数, 调用号)`。
 
     只数字数不看内容：那是 JSON 片段，流上屏是噪音，而且它不是产物。
+    调用号是模型给的 tool_call_id（一般只在首片非空），与工具回调那端同一个号——
+    心跳带上它，展示层才能把"正在写"这条和后面工具起止那条对成同一次调用。
     """
     name = ""
     n = 0
+    call_id = ""
     for tc in getattr(chunk, "tool_call_chunks", None) or []:
         if isinstance(tc, dict):
-            nm, ar = tc.get("name"), tc.get("args")
+            nm, ar, cid = tc.get("name"), tc.get("args"), tc.get("id")
         else:
-            nm, ar = getattr(tc, "name", None), getattr(tc, "args", None)
+            nm, ar, cid = (
+                getattr(tc, "name", None),
+                getattr(tc, "args", None),
+                getattr(tc, "id", None),
+            )
         if nm:
             name = str(nm)
+        if cid:
+            call_id = str(cid)
         n += len(str(ar or ""))
-    return name, n
+    return name, n, call_id
 
 
 async def _stream_agent(graph, state, config, who: str, role: str):
@@ -105,6 +114,7 @@ async def _stream_agent(graph, state, config, who: str, role: str):
     cur_id: str | None = None  # 当前这条 AI 消息的 id —— 换了消息就把 buf 落盘
     #: 工具参数累计，写产物那一段靠它报进度
     tool_name = ""
+    tool_call_id = ""
     arg_chars = 0
     reported_chars = 0
     #: 当前这条消息开始的时间：心跳的"已写"按它算——与字数同一个起点（换消息时一起归零）。
@@ -152,6 +162,9 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                 "tool": tool_name,
                 "arg_chars": arg_chars,
                 "written_s": round(now - started_at, 1),
+                # 调用号走结构：与后面工具回调那端同一个号，展示层靠它把"写"和"落库"
+                # 两段对成同一次调用（写产物的工具行只量落库那 0.1s，写的时间在这里）。
+                "call_id": tool_call_id or None,
             },
         )
         reported_chars, reported_at = arg_chars, now
@@ -180,6 +193,7 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                     # arg_chars 还在涨，屏幕上会把"已收到 3346 字"排在产物落盘那行后面。
                     # 计数是这一条消息的，不是这一趟的；时间起点与它一起归零，字和秒同窗。
                     tool_name = ""
+                    tool_call_id = ""
                     arg_chars = 0
                     reported_chars = 0
                     reported_at = time.monotonic()
@@ -196,9 +210,11 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                     buf = ""
                 # 工具参数的增量也要数：模型写产物时输出的是参数、content 是空的，
                 # 不数就那几分钟全静音。
-                _nm, _n = _tool_arg_delta(chunk)
+                _nm, _n, _cid = _tool_arg_delta(chunk)
                 if _nm:
                     tool_name = _nm
+                if _cid:
+                    tool_call_id = _cid
                 arg_chars += _n
                 maybe_report()
 

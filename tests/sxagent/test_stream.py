@@ -82,6 +82,8 @@ async def test_writing_progress_only_reports_write_artifact() -> None:
     # 谁在写也走结构字段：主 agent 自己写产物时也发这条，宿主该照它写主语，
     # 不许默认"执行器"（实测主 agent 兜底写产物被宿主标成了执行器）
     assert events[0]["who"] == "哨兵"
+    # 调用号也走结构：与工具回调那端同一个号，展示层靠它把"写"与"落库"合到一行
+    assert events[0]["call_id"] == "c1"
 
 
 class _FakeClock:
