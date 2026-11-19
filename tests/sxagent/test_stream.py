@@ -79,3 +79,6 @@ async def test_writing_progress_only_reports_write_artifact() -> None:
     assert "已收到 500 字" in str(events[0]["text"])
     # 时间是"写这个产物的累计"（零点=这一趟开始），走结构字段给展示层
     assert isinstance(events[0]["written_s"], float)
+    # 谁在写也走结构字段：主 agent 自己写产物时也发这条，宿主该照它写主语，
+    # 不许默认"执行器"（实测主 agent 兜底写产物被宿主标成了执行器）
+    assert events[0]["who"] == "哨兵"

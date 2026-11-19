@@ -144,6 +144,9 @@ async def _stream_agent(graph, state, config, who: str, role: str):
             # 工具名走结构：展示层要把它和后面那条工具回调（executor_tool）对上，
             # 不许从这句话的反引号里抠；字数与累计耗时同理，宿主按字段写自己的行。
             fields={
+                # 谁在写也走结构：主 agent 自己写产物时也发这条（宿主照它写主语，
+                # 不许默认"执行器"——实测主 agent 兜底写产物被标成执行器）。
+                "who": who,
                 "tool": tool_name,
                 "arg_chars": arg_chars,
                 "written_s": round(now - started_at, 1),
