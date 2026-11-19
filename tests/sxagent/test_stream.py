@@ -77,3 +77,5 @@ async def test_writing_progress_only_reports_write_artifact() -> None:
     assert len(events) == 1, events
     assert events[0]["tool"] == "write_artifact", "工具名要走结构字段，展示层不解析文案"
     assert "已收到 500 字" in str(events[0]["text"])
+    # 时间是"写这个产物的累计"（零点=这一趟开始），走结构字段给展示层
+    assert isinstance(events[0]["written_s"], float)

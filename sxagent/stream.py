@@ -107,7 +107,9 @@ async def _stream_agent(graph, state, config, who: str, role: str):
     tool_name = ""
     arg_chars = 0
     reported_chars = 0
-    reported_at = time.monotonic()
+    #: 这一趟开始的时间：心跳里的"已写"按它算累计（不随每次报告回跳）
+    started_at = time.monotonic()
+    reported_at = started_at
 
     def flush_line(line: str) -> None:
         if line.strip():
@@ -137,14 +139,14 @@ async def _stream_agent(graph, state, config, who: str, role: str):
             return
         trace.note(
             f"⏳ {who} 正在写 `{tool_name}`：**已收到 {arg_chars} 字**"
-            f"（这一段已 {now - reported_at:.0f}s）",
+            f"（已写 {now - started_at:.0f}s）",
             kind="writing",
             # 工具名走结构：展示层要把它和后面那条工具回调（executor_tool）对上，
-            # 不许从这句话的反引号里抠；字数与这段耗时同理，宿主按字段写自己的行。
+            # 不许从这句话的反引号里抠；字数与累计耗时同理，宿主按字段写自己的行。
             fields={
                 "tool": tool_name,
                 "arg_chars": arg_chars,
-                "elapsed_s": round(now - reported_at, 1),
+                "written_s": round(now - started_at, 1),
             },
         )
         reported_chars, reported_at = arg_chars, now
