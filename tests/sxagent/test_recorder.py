@@ -24,6 +24,7 @@ def test_use_dir_puts_the_log_where_told_and_builds_it_late(tmp_path: Path) -> N
     assert p.parent == where
     assert p.read_text(encoding="utf-8") == "哨兵一行\n"
 
+
 def test_dump_keeps_keys_not_full_text(monkeypatch, tmp_path: Path) -> None:
     """日志只放钥匙：长正文（技能指令 / 参考文件 / 产物这类，持久化数据里查得回）默认
     只记开头，并标出全文多少字、开关在哪；短内容整段记（读的人用得上）。"""
@@ -37,12 +38,16 @@ def test_dump_keeps_keys_not_full_text(monkeypatch, tmp_path: Path) -> None:
     )
     from sxagent import trace
 
-    trace.dump_trace("哨兵一步", [ToolMessage(content=long_text, tool_call_id="c1")], role=trace.AGENT)
+    trace.dump_trace(
+        "哨兵一步", [ToolMessage(content=long_text, tool_call_id="c1")], role=trace.AGENT
+    )
     body = recorder.log_file().read_text(encoding="utf-8")
     assert "尾巴" not in body, "长正文的结尾不该进日志（全文都进了说明没摘要）"
     assert f"正文共 {len(long_text)} 字" in body
     assert "SXAGENT_LOG_PROMPT=1" in body
 
-    trace.dump_trace("哨兵一步", [ToolMessage(content="短回执", tool_call_id="c2")], role=trace.AGENT)
+    trace.dump_trace(
+        "哨兵一步", [ToolMessage(content="短回执", tool_call_id="c2")], role=trace.AGENT
+    )
     body = recorder.log_file().read_text(encoding="utf-8")
     assert "短回执" in body, "短内容整段记 —— 只放钥匙不是不放钥匙"

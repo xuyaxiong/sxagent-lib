@@ -171,7 +171,9 @@ _ASK_STEP = "试答（LLM）· 平台强制的一步"
 
 
 class _AgentAnswer(BaseModel):
-    can_answer: bool = Field(description="你的上下文里有没有它缺的那一项（先核对：你要给的正是它问的）")
+    can_answer: bool = Field(
+        description="你的上下文里有没有它缺的那一项（先核对：你要给的正是它问的）"
+    )
     answer: str = Field(default="", description="can_answer=true 时给出补充内容，原话照搬不要改写")
 
 
@@ -685,9 +687,7 @@ def validate_exec_path(exec_path: str) -> str:
     是哪个参数错了、合法值是什么。
     """
     if exec_path not in EXEC_PATHS:
-        raise ValueError(
-            f"exec_path 不合法：{exec_path!r}。合法值：{'、'.join(EXEC_PATHS)}"
-        )
+        raise ValueError(f"exec_path 不合法：{exec_path!r}。合法值：{'、'.join(EXEC_PATHS)}")
     return exec_path
 
 

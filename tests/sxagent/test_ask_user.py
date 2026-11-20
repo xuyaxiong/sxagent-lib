@@ -86,12 +86,12 @@ async def test_empty_question_is_rejected_without_the_marker(monkeypatch) -> Non
     msgs = app.get_state(config).values["messages"]
     assert isinstance(msgs[-1], AIMessage), "空问题不该被当成有效提问收话"
     rejected = [
-        m
-        for m in msgs
-        if isinstance(m, ToolMessage) and "question 不能为空" in str(m.content)
+        m for m in msgs if isinstance(m, ToolMessage) and "question 不能为空" in str(m.content)
     ]
     assert rejected, "空问题没有当场拒绝"
-    assert not any((m.additional_kwargs or {}).get("ask") for m in msgs if isinstance(m, ToolMessage))
+    assert not any(
+        (m.additional_kwargs or {}).get("ask") for m in msgs if isinstance(m, ToolMessage)
+    )
 
 
 def test_an_ask_marker_in_the_batch_stops_the_turn() -> None:
@@ -99,9 +99,7 @@ def test_an_ask_marker_in_the_batch_stops_the_turn() -> None:
     state = {
         "messages": [
             AIMessage(""),
-            ToolMessage(
-                "返回", tool_call_id="c1", additional_kwargs={"ask": {"question": "Q?"}}
-            ),
+            ToolMessage("返回", tool_call_id="c1", additional_kwargs={"ask": {"question": "Q?"}}),
         ]
     }
     assert _StopWhenPending().before_model(state, None) == {"jump_to": "end"}

@@ -43,9 +43,9 @@ from langchain_core.messages import HumanMessage
 
 from sxagent import build, recorder, session
 
-recorder.use_dir("日志目录")   # 默认落点是"应用根"——装成库时那是 site-packages，宿主该换掉
+recorder.use_dir("日志目录")  # 默认落点是"应用根"——装成库时那是 site-packages，宿主该换掉
 
-with session.session(thread_id):          # 产物库、发号器、事件订阅都挂在会话上
+with session.session(thread_id):  # 产物库、发号器、事件订阅都挂在会话上
     app = build(model=模型实例, artifacts=产物库, skills=技能来源)
     state = app.ainvoke(
         {"messages": [HumanMessage("用户这句话")]},

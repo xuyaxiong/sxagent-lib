@@ -38,9 +38,7 @@ class _SpyStore(MemoryArtifacts):
     def __init__(self) -> None:
         self.puts: list[str] = []
 
-    async def put(
-        self, aid: str, title: str, summary: str, file_type: str, content: str
-    ) -> None:
+    async def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
         self.puts.append(aid)
         await super().put(aid, title, summary, file_type, content)
 
@@ -170,9 +168,7 @@ async def test_the_feed_path_injects_the_result_back(monkeypatch) -> None:
     assert "art_x" in msg.content
 
     # ② 还是缺信息：同一形态，问题也一并交回去（台账那边不重印问题，靠这份）
-    deliveries.append(
-        ExecOutcome(status="waiting_for_input", asked="请给出这节课的上法")
-    )
+    deliveries.append(ExecOutcome(status="waiting_for_input", asked="请给出这节课的上法"))
     out = await node(dict(state))
     (msg,) = out["messages"]
     assert "【投回】" in msg.content

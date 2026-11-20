@@ -242,9 +242,7 @@ def section(title: str, kind: str = "", *, fields: Mapping[str, object] | None =
     _publish(ev)
 
 
-def note(
-    text: str, kind: str = "", *, fields: Mapping[str, object] | None = None
-) -> None:
+def note(text: str, kind: str = "", *, fields: Mapping[str, object] | None = None) -> None:
     """一条记录（带时间戳）。只发内容，日志文件里的前缀（如 `finalize: `）归记录器。
 
     `text` 通常是一行；透传那条是例外 —— 它带的就是待答原文，本来就可能多行。

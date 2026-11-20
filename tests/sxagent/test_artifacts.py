@@ -102,9 +102,13 @@ async def test_ids_are_unique_across_requests() -> None:
         }
 
     with session.session("conv-1"):
-        await make_write_artifact(created, store=store).ainvoke(_call("第一份", "正文一", "call-t1"))
+        await make_write_artifact(created, store=store).ainvoke(
+            _call("第一份", "正文一", "call-t1")
+        )
     with session.session("conv-1"):  # 第二个请求：新会话对象，同一个产物库
-        await make_write_artifact(created, store=store).ainvoke(_call("第二份", "正文二", "call-t2"))
+        await make_write_artifact(created, store=store).ainvoke(
+            _call("第二份", "正文二", "call-t2")
+        )
 
     assert len(set(created)) == 2
     assert all(re.fullmatch(r"art_[0-9a-f]{8}", aid) for aid in created)

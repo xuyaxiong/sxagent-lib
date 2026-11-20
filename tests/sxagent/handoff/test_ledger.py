@@ -63,9 +63,7 @@ def test_missing_or_unknown_fault_kind_falls_back_to_transient(kind: str) -> Non
 
 def test_faulted_task_shows_the_fault_not_what_the_executor_said() -> None:
     """故障时打故障原因、不打「执行器说」—— 它一个字都没说，照打就是冒号后面空白。"""
-    text = render_ledger(
-        [_task(stage="failed", fault="SENTINEL-FAULT", fault_kind="transient")]
-    )
+    text = render_ledger([_task(stage="failed", fault="SENTINEL-FAULT", fault_kind="transient")])
     assert "SENTINEL-FAULT" in text
     assert "SENTINEL-REPORT" not in text
 
