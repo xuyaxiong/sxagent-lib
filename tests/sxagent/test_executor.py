@@ -11,16 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.outputs import ChatResult
+from langchain_core.tools import InjectedToolCallId, tool
+from langgraph.types import Command
 
 from sxagent import artifacts, trace
 from sxagent.artifacts import MemoryArtifacts
-from sxagent.executor import ExecOutcome, _structural_status, run_task
+from sxagent.executor import ExecOutcome, _absorb_delivered, _Run, _structural_status, run_task
 from sxagent.skills import Skill
 from tests.fakes import ToolCallingFakeModel
 
@@ -33,9 +35,7 @@ class _SpyStore(MemoryArtifacts):
     def __init__(self) -> None:
         self.puts: list[str] = []
 
-    async def put(
-        self, aid: str, title: str, summary: str, file_type: str, content: str
-    ) -> None:
+    async def put(self, aid: str, title: str, summary: str, file_type: str, content: str) -> None:
         self.puts.append(aid)
         await super().put(aid, title, summary, file_type, content)
 
@@ -378,3 +378,81 @@ async def test_ask_user_options_ride_to_the_outcome() -> None:
     assert outcome.status == "waiting_for_input"
     assert outcome.asked == "这节课侧重哪种上法？"
     assert outcome.asked_options == ["探究型", "讲解型"]
+
+
+class _ProgramDeliveringModel(ToolCallingFakeModel):
+    """按脚本调一次程序侧交付工具（工具自己落库、结果消息带结构化字段），然后收尾。"""
+
+    def _respond(self, messages: list[BaseMessage]) -> ChatResult:
+        self.calls.append(("程序侧", time.monotonic()))
+        if any(isinstance(m, ToolMessage) for m in messages):
+            return self._result(AIMessage("收尾"))
+        return self._result(
+            AIMessage(
+                "",
+                tool_calls=[{"name": _deliver_program_side.name, "args": {}, "id": "call-prog"}],
+            )
+        )
+
+
+@tool
+async def _deliver_program_side(
+    tool_call_id: Annotated[str, InjectedToolCallId] = "",
+) -> Command:
+    """假工具：模拟组卷那样的程序侧交付 —— 自己落库，结果消息带 `delivered_artifacts`。"""
+    return Command(
+        update={
+            "messages": [
+                ToolMessage(
+                    content="已交付 art_prog0001",
+                    tool_call_id=tool_call_id,
+                    additional_kwargs={
+                        "delivered_artifacts": ["art_prog0001"],
+                        "working_data": ["m-test360"],
+                    },
+                )
+            ]
+        }
+    )
+
+
+async def test_program_side_delivery_counts_as_delivered(monkeypatch) -> None:
+    """程序侧交付要认进交付账：不进账的话它明明交了却被当成"没交"，推一轮接着干。"""
+    fake = _ProgramDeliveringModel()
+    monkeypatch.setattr("sxagent.executor.get_model", lambda *a, **k: fake)
+    spy = _SpyStore()
+
+    outcome = await run_task(
+        _skill("skill-a", MARKER_A), "交接书", artifacts=spy, extra_tools=[_deliver_program_side]
+    )
+
+    assert outcome.artifacts == ["art_prog0001"]
+    assert outcome.working_data == ["m-test360"], "中间数据另立一本账，与交付物分开"
+    assert outcome.status == "completed", "进了账就该收工，而不是被推回去"
+    assert outcome.rounds == 1, "交付那一轮就收工（模型自己的收尾话照常说完）——没被推着再跑一轮"
+
+
+def test_working_data_never_counts_as_delivery() -> None:
+    """只报中间数据不算交付：产出中间料不等于"这一趟干完了"，出口判定不许认它。"""
+    run = _Run(
+        skill=_skill("skill-a", MARKER_A),
+        run_id="R99",
+        t0=0.0,
+        messages=[],
+        outcome=ExecOutcome(),
+        created=[],
+        working=[],
+        asked={},
+    )
+    _absorb_delivered(
+        run,
+        [
+            ToolMessage(
+                content="",
+                tool_call_id="call-1",
+                additional_kwargs={"working_data": ["m-1", "m-1", "m-2"]},
+            )
+        ],
+    )
+    assert run.working == ["m-1", "m-2"]
+    assert run.created == []

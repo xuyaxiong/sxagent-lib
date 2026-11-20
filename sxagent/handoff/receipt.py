@@ -32,6 +32,7 @@ from sxagent.handoff import (
     NUDGED_WITHOUT_DELIVERY,
     Outcome,
     render_hop,
+    working_data_lines,
 )
 
 # ──────────────────────────── schema：回执上有什么 ────────────────────────────
@@ -280,13 +281,18 @@ def build_receipt(
     if produced:
         sections["produced"] = produced
 
-    # ③ 执行器说：全文，一个字都不截（这是"它交付了什么"）。
+    # ③ 中间数据：会话内暂存的那类 —— 与【产出的产物】显式分开，别混成一张单子。
+    working = "\n".join(working_data_lines(outcome.working_data or []))
+    if working:
+        sections["working"] = working
+
+    # ④ 执行器说：全文，一个字都不截（这是"它交付了什么"）。
     # 已知膨胀点：它交代得长的时候，这一段会整段进主 agent 的上下文 —— 代价不是 bug。
     report = str(outcome.report or "").strip()
     if report:
         sections["report"] = report
 
-    # ④ 主 agent 自己试答补的信息（成对记进了 `qa`，这里回显一下）
+    # ⑤ 主 agent 自己试答补的信息（成对记进了 `qa`，这里回显一下）
     if agent_answer.strip():
         sections["agent_answer"] = agent_answer.strip()
 

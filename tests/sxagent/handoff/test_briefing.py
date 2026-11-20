@@ -34,6 +34,7 @@ SENTINEL: dict[str, object] = {
     "task": "SENTINEL-TASK",
     "stage": "running",
     "artifacts": ["art_001"],
+    "working_data": ["m-360"],
     "refs": ["art_002"],
     "report": "SENTINEL-REPORT",
     "asked": "SENTINEL-ASKED",

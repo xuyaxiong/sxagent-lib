@@ -8,8 +8,9 @@
 1. 不绑技能。技能指令随任务传进来，加一个技能不用动平台。
 2. 用完即弃：不跨轮、不挂起、不与用户交互。状态在 `Task` 上，所以"重新起一个"是无害的。
 3. 出口三态由结构算（`_structural_status`）。平台只看三件自己看得见的事：调过 `ask_user`、
-   记过 `write_artifact`、两样都没有。不读正文、不判质量。它自己停下来又什么都没交，平台
-   就推它接着干 —— **没有轮次上限**，跑多久由墙钟管；推了又推这个事实由账如实记。
+   记过交付（`write_artifact`，或工具结果消息带 `delivered_artifacts` 的程序侧交付）、
+   两样都没有。不读正文、不判质量。它自己停下来又什么都没交，平台就推它接着干 ——
+   **没有轮次上限**，跑多久由墙钟管；推了又推这个事实由账如实记。
 4. 判据的输入一样不能少（`_verdict` 的【前提】）：三件结构事实，"没有"也要显式写。
 5. 状态是结构不是文本：三态用枚举，要信息走 `ask_user`，故障记 `fault_kind`，不从 `fault`
    那段文字反解析。
@@ -29,7 +30,7 @@ from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
 from sxagent import stream, trace
@@ -104,6 +105,8 @@ class ExecOutcome:
     #: 唯一映射是 `incomplete → failed`。没有第四种。
     status: OutcomeStatus = "incomplete"
     artifacts: list[str] = field(default_factory=list)
+    #: 这一趟留下的中间数据（会话内暂存，不是交付物）：只作陈述，不参与出口判定。
+    working_data: list[str] = field(default_factory=list)
     report: str = ""
     #: 实际 react 了几轮
     rounds: int = 0
@@ -218,6 +221,8 @@ class _Run:
     outcome: ExecOutcome
     #: 这次 run 写了哪些产物 —— 由工具自己记（闭包，按 run 归属）
     created: list[str]
+    #: 这次 run 留下的中间数据（会话内暂存，不是交付物）—— 只作陈述，不参与出口判定
+    working: list[str]
     #: `ask_user` 申报的内容（闭包，同 `created`）：`question` ＋ 可选 `options`
     asked: dict[str, object]
 
@@ -328,6 +333,7 @@ def _open_run(
 ) -> tuple[_Run, CompiledStateGraph]:
     """准备：建 agent、渲染这一趟的输入、写开跑前那几条日志。返回 `(运行态, agent)`。"""
     created: list[str] = []
+    working: list[str] = []
     asked: dict[str, object] = {}
     agent = _build_executor(user_turns, created, asked, artifacts, skills, model, extra_tools)
 
@@ -374,8 +380,37 @@ def _open_run(
         messages=[HumanMessage(task_text)],
         outcome=ExecOutcome(),
         created=created,
+        working=working,
         asked=asked,
     ), agent
+
+
+def _absorb_delivered(run: _Run, messages: object) -> None:
+    """程序侧交付与中间数据记账：扫工具结果消息的结构化字段，认进账。
+
+    两条通道，两本账，别混：`delivered_artifacts`（交付物）进 `created`，参与出口判定；
+    `working_data`（会话内暂存的中间数据，如组卷取题材料）进 `working`，只作陈述 —— 产出
+    中间料不等于交付，谁都不许拿它当"这一趟干完了"的证据。`write_artifact` 由工具闭包自己
+    记；程序侧不在闭包里，改由工具在结果消息上带字段——读字段，不解析文本。已记的号不重录；
+    消息不是列表、字段不是字符串列表都当没有（故障路径拿到半截 resp 也不炸）。
+    """
+    if not isinstance(messages, list):
+        return
+    buckets = {
+        "delivered_artifacts": run.created,
+        "working_data": run.working,
+    }
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        kwargs = message.additional_kwargs or {}
+        for key, bucket in buckets.items():
+            values = kwargs.get(key)
+            if not isinstance(values, list):
+                continue
+            for aid in values:
+                if isinstance(aid, str) and aid and aid not in bucket:
+                    bucket.append(aid)
 
 
 def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str) -> None:
@@ -391,6 +426,7 @@ def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str
     # 这一趟写过的产物照记：故障不抹掉已经交出去的东西。账上"产物 0 个"而库里有，
     # 视图就说了假话（实测：被墙钟切掉的那趟写了 5 份，账里一份都没有）。
     outcome.artifacts = list(run.created)
+    outcome.working_data = list(run.working)
     # 分类是结构（`transient` / `rejected` / `timeout`）：展示层要按它决定话术与重试，
     # 不该去解析那句中文。
     trace.note(
@@ -438,6 +474,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
             ):
                 resp = chunk
     except TimeoutError:
+        _absorb_delivered(run, resp.get("messages"))
         _record_fault(
             run,
             round_i + 1,
@@ -461,6 +498,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
             else f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（这一轮没跑成）："
             f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent"
         )
+        _absorb_delivered(run, resp.get("messages"))
         _record_fault(run, round_i + 1, f"{type(e).__name__}: {e}", _kind, _note)
         return None
     if not resp:
@@ -476,8 +514,10 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict[str, object] | None
         )
         return None
     trace.dump_trace(_at(run.run_id, round_i + 1), resp["messages"], role=trace.EXECUTOR)
+    _absorb_delivered(run, resp["messages"])
 
     outcome.artifacts = list(run.created)  # 记账，不扫文本
+    outcome.working_data = list(run.working)
     outcome.report = _last_ai_text(resp)
     outcome.rounds = round_i + 1
     return resp

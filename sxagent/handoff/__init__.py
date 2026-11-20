@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal, Protocol, runtime_checkable
 
 # ──────────────────────────── 段名 ────────────────────────────
@@ -42,6 +43,8 @@ SECTION: dict[str, str] = {
     #: 它申报要的那句原话。塞进【交付】就混进平台的框架话里了。
     "asked": "【它要的信息】",
     "produced": "【产出的产物】",
+    #: 会话内暂存的那类（如组卷取题材料）：与【产出的产物】显式分开陈述，别混成一张单子。
+    "working": "【中间数据】",
     "report": "【执行器说】",
     "agent_answer": "【你补的信息】",
     "next": "【下一步】",
@@ -127,6 +130,8 @@ class Outcome(Protocol):
 
     status: OutcomeStatus
     artifacts: list[str]
+    #: 这一趟留下的中间数据（会话内暂存，不是交付物）：只作陈述，不参与出口判定。
+    working_data: list[str]
     report: str
     asked: str
     fault: str
@@ -159,6 +164,18 @@ def body_lines(text: object, pad: str = BODY) -> list[str]:
     if not raw.strip():
         return []
     return [f"{pad}{ln}" if ln.strip() else pad for ln in raw.splitlines()]
+
+
+#: 中间数据清单行的共同说明 —— 一句话说清它是什么、不是什么。
+WORKING_NOTE = "（中间数据：会话内暂存、不进产物库与产物清单；不是交付物。）"
+
+
+def working_data_lines(aids: Sequence[str]) -> list[str]:
+    """中间数据 → 清单行：裸 ID（去重保序）＋ 一句共同说明。空进空出。"""
+    ids = list(dict.fromkeys(aid for aid in aids if aid))
+    if not ids:
+        return []
+    return [*(f"- {aid}" for aid in ids), WORKING_NOTE]
 
 
 def bullet_lines(text: object, pad: str = BODY) -> list[str]:
@@ -220,6 +237,7 @@ HOPS: dict[str, tuple[str, ...]] = {
         "user_turns",
         "answered",
         "already_produced",
+        "working",
         "readable",
         "resume",
     ),
@@ -231,6 +249,7 @@ HOPS: dict[str, tuple[str, ...]] = {
         "deliver",
         "asked",
         "produced",
+        "working",
         "report",
         "agent_answer",
         "next",

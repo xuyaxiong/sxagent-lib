@@ -87,7 +87,8 @@ def render_ledger(tasks: list[Task]) -> str:
             else STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?"))
         )
         arts = f" → {', '.join(t['artifacts'])}" if t.get("artifacts") else ""
-        body.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}")
+        working = f"；中间数据 {', '.join(t['working_data'])}" if t.get("working_data") else ""
+        body.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}{working}")
         # 没完成的任务，把执行器原话也带上 —— 只说"没完成"，主 agent 没法决定怎么处置。
         # `run_by` 一路传下去：这两段都来自同一轮。
         by = str(t.get("run_by") or "")

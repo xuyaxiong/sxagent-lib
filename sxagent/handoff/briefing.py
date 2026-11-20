@@ -28,6 +28,7 @@ from sxagent.handoff import (
     TaskStage,
     body_lines,
     section_head,
+    working_data_lines,
 )
 
 # ──────────────────────────── schema：委托单上有什么 ────────────────────────────
@@ -69,6 +70,8 @@ class Task(TypedDict, total=False):
     task: str  # 主 agent 写的"这次要什么"（它说的，可能加了料）
     stage: TaskStage  # 五态，词汇表在 `handoff/__init__`
     artifacts: list[str]  # 产出的产物 ID
+    #: 这套工作留下的中间数据 ID（会话内暂存，不是交付物）—— 与 `artifacts` 两本账，别混。
+    working_data: list[str]
     refs: list[str]  # 输入引用的产物 ID（两个方向，别混）
     report: str  # 执行器最后一轮的原话（覆盖写）
     #: 它申报要的那条信息 —— `ask_user(question)` 参数里的原话（覆盖写）。
@@ -260,6 +263,14 @@ def _block_answered(task: Task) -> str | None:
     return "\n".join(block)
 
 
+def _block_working(task: Task) -> str | None:
+    """中间数据段 —— 这套工作留下的会话内暂存：接着干时可能用得上，但它不是交付物。"""
+    lines = working_data_lines(task.get("working_data") or [])
+    if not lines:
+        return None
+    return "\n".join([*section_head("working"), *(f"{BODY}{line}" for line in lines)])
+
+
 def _block_resume(task: Task) -> str | None:
     """⑤ 续跑提示 —— 只有重入才说：首跑说"接着干"会让它以为有前情。"""
     if not (task.get("report") or task.get("qa")):
@@ -288,6 +299,7 @@ def render_briefing(task: Task, store: ArtifactStore = DEFAULT_STORE) -> str:
             "（这次要**在它基础上补全**，提交完整版；不要从零重写。）",
             store,
         ),
+        _block_working(task),
         _index_block(
             "readable",
             task.get("refs") or [],
@@ -321,6 +333,11 @@ def absorb_outcome(rec: Task, outcome: Outcome) -> None:
     rec["fault_kind"] = outcome.fault_kind
     if outcome.artifacts:
         rec["artifacts"] = list(dict.fromkeys([*(rec.get("artifacts") or []), *outcome.artifacts]))
+    # 中间数据同样累加去重保序 —— 它是另一本账：它不是交付物，不进出口判定。
+    if outcome.working_data:
+        rec["working_data"] = list(
+            dict.fromkeys([*(rec.get("working_data") or []), *outcome.working_data])
+        )
 
 
 #: 执行器三态 → `Task.stage`，只有这一处映射。三态是封闭枚举，所以这里穷举。
