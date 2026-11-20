@@ -47,7 +47,9 @@ Skill 是一份写好的专业能力：说明加脚本，可以反复用。Task 
 `build_cli.py` 把 `app/` 打成 exe，发给没装 Python 的人试。
 
 宿主只从 `sxagent/__init__.py` 的 `__all__` 取东西：一个装配入口（`build`）、要给的配料
-（技能来源、产物库、模型）、要读的词汇（`Task` / `Outcome` / 事件总线 / 会话）。
+（技能来源、产物库、模型）、要读的词汇（`Task` / `Outcome` / 事件总线 / 会话）。唯一的
+模块路径 import 是装配动作 `import sxagent.recorder`（import 即自注册，装上全量日志；
+不 import 就没有日志文件，那是宿主的选择）。
 
 ## 依赖只能单向走
 
