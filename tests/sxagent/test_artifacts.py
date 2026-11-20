@@ -9,7 +9,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from sxagent.artifacts import DEFAULT_STORE, ArtifactStore, MemoryArtifacts, make_write_artifact
+import pytest
+
+from sxagent.artifacts import (
+    DEFAULT_STORE,
+    ArtifactStore,
+    MemoryArtifacts,
+    make_write_artifact,
+    next_aid,
+)
 
 
 class _DurableStore:
@@ -173,3 +181,20 @@ def test_unusable_type_falls_back_to_md() -> None:
     assert file_ext("不要这种") == ".md"
     assert file_ext("a/b") == ".md"
     assert file_ext("way-too-long-type") == ".md"
+
+
+def test_next_aid_shape() -> None:
+    """发号形状由库定：`art_` + 8 位十六进制 —— 宿主实现产物库时同走它。"""
+    aid = next_aid(MemoryArtifacts())
+    assert aid.startswith("art_") and len(aid) == len("art_") + 8
+
+
+def test_next_aid_gives_up_loudly() -> None:
+    """撞号重发有上界：`has()` 坏了要当场报错，不许死循环把执行器卡死。"""
+
+    class _AlwaysHas(MemoryArtifacts):
+        def has(self, aid: str) -> bool:  # noqa: ARG002
+            return True
+
+    with pytest.raises(RuntimeError, match=r"has\(\)"):
+        next_aid(_AlwaysHas())

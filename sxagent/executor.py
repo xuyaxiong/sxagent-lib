@@ -41,7 +41,13 @@ from sxagent.artifacts import (
     make_write_artifact,
 )
 from sxagent.config import get_model
-from sxagent.handoff import FaultKind, OutcomeStatus, render_hop
+from sxagent.handoff import (
+    DELIVERED_ARTIFACTS,
+    WORKING_DATA,
+    FaultKind,
+    OutcomeStatus,
+    render_hop,
+)
 from sxagent.handoff.briefing import Turn  # 用户原话快照的形状
 
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
@@ -397,8 +403,8 @@ def _absorb_delivered(run: _Run, messages: object) -> None:
     if not isinstance(messages, list):
         return
     buckets = {
-        "delivered_artifacts": run.created,
-        "working_data": run.working,
+        DELIVERED_ARTIFACTS: run.created,
+        WORKING_DATA: run.working,
     }
     for message in messages:
         if not isinstance(message, ToolMessage):

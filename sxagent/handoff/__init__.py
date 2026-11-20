@@ -193,6 +193,30 @@ INJECTED: dict[str, str] = {
 }
 
 
+# ──────────────────────────── 工具结果的交付标记 ────────────────────────────
+
+#: 交付标记的字段名 —— 一处定义：宿主用 `delivered_marks` 拼、执行器按同名字段入账。
+#: 程序侧交付（工具内部自己落库的那些）靠它进账，不解析回执文本。
+DELIVERED_ARTIFACTS = "delivered_artifacts"
+WORKING_DATA = "working_data"
+
+
+def delivered_marks(
+    artifacts: Sequence[str] = (), working: Sequence[str] = ()
+) -> dict[str, list[str]]:
+    """拼工具结果消息的交付标记，挂在 `ToolMessage.additional_kwargs` 上。
+
+    `artifacts`=交付物（进交付账，参与出口判定）；`working`=中间数据（另立一账，只作陈述）。
+    空的类别不放键 —— 记账那边"字段不在"与"字段为空"是同一回事，不放键少一份噪声。
+    """
+    marks: dict[str, list[str]] = {}
+    if artifacts:
+        marks[DELIVERED_ARTIFACTS] = list(artifacts)
+    if working:
+        marks[WORKING_DATA] = list(working)
+    return marks
+
+
 # ──────────────────────────── 出口分类 ────────────────────────────
 
 #: 【交付】那一行的四种头，`{}` 是变量。挑哪条看 `Receipt.kind`，不从渲染结果反推。

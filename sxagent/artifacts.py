@@ -10,7 +10,7 @@
 2. 类型靠硬派发，不嗅探内容：类型是产出方（模型）在交付时说的，照它存；认不出来存
    `DEFAULT_EXT`，不报错：产物已经做出来了，存不下比存错更糟。
 3. 落盘那份和库里那份一字不差，"这是哪一份"由文件名承载（`art_3f9a2c1d_<标题>.md`）。
-4. ID 是随机短号（`art_` + 8 位十六进制，`_next_aid`），发之前问一次 `has()`：会话对象
+4. ID 是随机短号（`art_` + 8 位十六进制，`next_aid`），发之前问一次 `has()`：会话对象
    每请求一个（`with session()`），自增序号挂它就会跨轮重来；随机号不挂任何状态，跨轮、
    跨重启都不会重。
 5. 落盘目录只能走 `use_dir()`，直接赋值写错模块不会当场报错。
@@ -191,10 +191,13 @@ def clear() -> None:
 _AID_ATTEMPTS = 3
 
 
-def _next_aid(store: ArtifactStore) -> str:
+def next_aid(store: ArtifactStore) -> str:
     """发下一个产物 ID：`art_` + 8 位十六进制（随机号的理由见模块头不变量 4）。
 
     撞了就重发，但**有上界**：报错比死循环好，死循环会把执行器整趟卡死。
+
+    发号规则由库定：宿主实现自己的产物库（如 OSS）时同走它 —— ID 是模型要照着抄的东西，
+    形状不许各写一份。
     """
     for _ in range(_AID_ATTEMPTS):
         aid = f"art_{uuid.uuid4().hex[:8]}"
@@ -220,7 +223,7 @@ async def _store_into(
     发号在这儿、不在实现里：ID 是模型要照着抄的东西，形状得库说了算。落盘那条日志也在这儿
     ——换一个产物库（OSS），它照样得出现。
     """
-    aid = _next_aid(store)
+    aid = next_aid(store)
     await store.put(aid, title, summary, file_type, content)
     where = store.where(aid)
     trace.note(

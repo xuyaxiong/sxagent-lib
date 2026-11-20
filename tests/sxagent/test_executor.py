@@ -20,7 +20,7 @@ from langchain_core.outputs import ChatResult
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command
 
-from sxagent import artifacts, trace
+from sxagent import artifacts, delivered_marks, trace
 from sxagent.artifacts import MemoryArtifacts
 from sxagent.executor import ExecOutcome, _absorb_delivered, _Run, _structural_status, run_task
 from sxagent.skills import Skill
@@ -406,10 +406,9 @@ async def _deliver_program_side(
                 ToolMessage(
                     content="已交付 art_prog0001",
                     tool_call_id=tool_call_id,
-                    additional_kwargs={
-                        "delivered_artifacts": ["art_prog0001"],
-                        "working_data": ["m-test360"],
-                    },
+                    additional_kwargs=delivered_marks(
+                        artifacts=["art_prog0001"], working=["m-test360"]
+                    ),
                 )
             ]
         }
@@ -450,9 +449,18 @@ def test_working_data_never_counts_as_delivery() -> None:
             ToolMessage(
                 content="",
                 tool_call_id="call-1",
-                additional_kwargs={"working_data": ["m-1", "m-1", "m-2"]},
+                additional_kwargs=delivered_marks(working=["m-1", "m-1", "m-2"]),
             )
         ],
     )
     assert run.working == ["m-1", "m-2"]
     assert run.created == []
+
+
+def test_delivered_marks_shape() -> None:
+    """标记的形状与键名在这里钉死一处：空的类别不放键，两类各归各的字段。"""
+    assert delivered_marks() == {}
+    assert delivered_marks(artifacts=["art_1"], working=["m-1"]) == {
+        "delivered_artifacts": ["art_1"],
+        "working_data": ["m-1"],
+    }
